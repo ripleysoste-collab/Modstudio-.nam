@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,23 +24,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.outlined.FolderZip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,7 +42,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.data.analyzer.DffActionType
 import com.example.data.analyzer.DffMatchItem
@@ -61,7 +51,6 @@ import com.example.data.analyzer.ModDffEntry
 import com.example.data.analyzer.ModImplementationSummary
 import com.example.data.analyzer.RawTextureEntry
 import com.example.data.analyzer.ScriptInstallItem
-import com.example.data.analyzer.TargetContainer
 import com.example.data.analyzer.TextureMatchReason
 import com.example.data.parser.ImgArchiveReader
 import com.example.ui.components.RotatingBallIndicator
@@ -78,29 +67,10 @@ fun ModAnalysisResultView(
   result: ModAnalysisResult,
   matchState: MatchUiState = MatchUiState.Idle,
   rebuildState: RebuildUiState = RebuildUiState.Idle,
-  onRebuild: (MatchPlan, Map<String, TargetContainer>) -> Unit = { _, _ -> },
+  onRebuild: (MatchPlan) -> Unit = {},
   onClose: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  // Manual overrides for textures: textureName (lowercase) -> TargetContainer
-  val textureOverrides = remember { mutableStateMapOf<String, TargetContainer>() }
-  var textureTargetingPickerFor by remember { mutableStateOf<TargetContainer?>(null) }
-
-  // Effective texture lists taking user overrides into account
-  val allTextures = remember(result.gta3TextureEntries, result.gtaIntTextureEntries) {
-    result.gta3TextureEntries + result.gtaIntTextureEntries
-  }
-
-  val effectiveGta3Textures = allTextures.filter { entry ->
-    val override = textureOverrides[entry.name.lowercase()]
-    if (override != null) override == TargetContainer.GTA3 else entry.targetContainer == TargetContainer.GTA3
-  }
-
-  val effectiveGtaIntTextures = allTextures.filter { entry ->
-    val override = textureOverrides[entry.name.lowercase()]
-    if (override != null) override == TargetContainer.GTA_INT else entry.targetContainer == TargetContainer.GTA_INT
-  }
-
   Column(
     modifier = modifier
       .fillMaxSize()
@@ -145,11 +115,11 @@ fun ModAnalysisResultView(
           text = when {
             rebuildState is RebuildUiState.Rebuilding -> rebuildState.statusMessage
             rebuildState is RebuildUiState.Success -> "Mod inyectado y ubicado en el juego"
-            matchState is MatchUiState.Matched -> "Estructura clasificada • Revisa o confirma abajo"
+            matchState is MatchUiState.Matched -> "Inyectando automáticamente..."
             matchState is MatchUiState.Matching -> "Identificando coincidencias..."
             else -> {
               val dffText = if (result.totalDffFound > 0) "${result.totalDffFound} modelos .dff" else ""
-              val texText = if (allTextures.isNotEmpty()) "${allTextures.size} texturas .png" else ""
+              val texText = if (result.totalTexturesFound > 0) "${result.totalTexturesFound} texturas .png" else ""
               listOf(dffText, texText).filter { it.isNotEmpty() }.joinToString(" • ").ifEmpty { "Mod analizado" }
             }
           },
@@ -199,8 +169,8 @@ fun ModAnalysisResultView(
 
     val hasGta3 = result.gta3Entries.isNotEmpty()
     val hasGtaInt = result.gtaIntEntries.isNotEmpty()
-    val hasGta3Tex = effectiveGta3Textures.isNotEmpty()
-    val hasGtaIntTex = effectiveGtaIntTextures.isNotEmpty()
+    val hasGta3Tex = result.gta3TextureEntries.isNotEmpty()
+    val hasGtaIntTex = result.gtaIntTextureEntries.isNotEmpty()
 
     if (!hasGta3 && !hasGtaInt && !hasGta3Tex && !hasGtaIntTex) {
       // Empty state
@@ -279,20 +249,13 @@ fun ModAnalysisResultView(
             ContainerSectionHeader(
               containerName = "gta3 (Texturas)",
               containerType = "EXTERIORES",
-              count = effectiveGta3Textures.size,
+              count = result.gta3TextureEntries.size,
               itemType = "png"
             )
           }
 
-          items(effectiveGta3Textures, key = { "tex_gta3_${it.relativePath}_${it.name}" }) { entry ->
-            val isOverridden = textureOverrides.containsKey(entry.name.lowercase())
-            CleanAnalyzedTextureRow(
-              entry = entry,
-              isManuallyOverridden = isOverridden,
-              onMoveToOpposite = {
-                textureOverrides[entry.name.lowercase()] = TargetContainer.GTA_INT
-              }
-            )
+          items(result.gta3TextureEntries, key = { "tex_gta3_${it.relativePath}_${it.name}" }) { entry ->
+            CleanAnalyzedTextureRow(entry = entry)
             HorizontalDivider(
               modifier = Modifier.padding(horizontal = 16.dp),
               color = Color(0xFFF3F4F6),
@@ -308,20 +271,13 @@ fun ModAnalysisResultView(
             ContainerSectionHeader(
               containerName = "gta_int (Texturas)",
               containerType = "INTERIORES",
-              count = effectiveGtaIntTextures.size,
+              count = result.gtaIntTextureEntries.size,
               itemType = "png"
             )
           }
 
-          items(effectiveGtaIntTextures, key = { "tex_gtaint_${it.relativePath}_${it.name}" }) { entry ->
-            val isOverridden = textureOverrides.containsKey(entry.name.lowercase())
-            CleanAnalyzedTextureRow(
-              entry = entry,
-              isManuallyOverridden = isOverridden,
-              onMoveToOpposite = {
-                textureOverrides[entry.name.lowercase()] = TargetContainer.GTA3
-              }
-            )
+          items(result.gtaIntTextureEntries, key = { "tex_gtaint_${it.relativePath}_${it.name}" }) { entry ->
+            CleanAnalyzedTextureRow(entry = entry)
             HorizontalDivider(
               modifier = Modifier.padding(horizontal = 16.dp),
               color = Color(0xFFF3F4F6),
@@ -331,251 +287,22 @@ fun ModAnalysisResultView(
         }
       }
 
-      // Bottom Control Panel: Manual reclassification buttons & Confirm button
-      HorizontalDivider(color = Color(0xFFE5E7EB), thickness = 1.dp)
-
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .background(Color(0xFFFAFAFA))
-          .padding(horizontal = 16.dp, vertical = 12.dp)
-      ) {
-        // Small buttons for manual assignment (Exteriores & Interiores)
-        if (allTextures.isNotEmpty()) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            // Button 1: Exteriores
-            Button(
-              onClick = { textureTargetingPickerFor = TargetContainer.GTA3 },
-              colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFF3F4F6),
-                contentColor = Color(0xFF1E1F22)
-              ),
-              shape = RoundedCornerShape(10.dp),
-              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-              modifier = Modifier
-                .weight(1f)
-                .height(40.dp)
-                .testTag("btn_manual_exteriores")
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.FolderZip,
-                contentDescription = null,
-                tint = Color(0xFF1E1F22),
-                modifier = Modifier.size(18.dp)
-              )
-              Spacer(modifier = Modifier.width(6.dp))
-              Text(
-                text = "Exteriores (${effectiveGta3Textures.size})",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1
-              )
-            }
-
-            // Button 2: Interiores
-            Button(
-              onClick = { textureTargetingPickerFor = TargetContainer.GTA_INT },
-              colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFF3F4F6),
-                contentColor = Color(0xFF1E1F22)
-              ),
-              shape = RoundedCornerShape(10.dp),
-              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-              modifier = Modifier
-                .weight(1f)
-                .height(40.dp)
-                .testTag("btn_manual_interiores")
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.FolderZip,
-                contentDescription = null,
-                tint = Color(0xFF1E1F22),
-                modifier = Modifier.size(18.dp)
-              )
-              Spacer(modifier = Modifier.width(6.dp))
-              Text(
-                text = "Interiores (${effectiveGtaIntTextures.size})",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1
-              )
-            }
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-        }
-
-        // Confirmation Button ("Confirmar") to proceed to the rebuild & success interface
-        Button(
-          onClick = {
-            if (matchPlan != null) {
-              onRebuild(matchPlan, textureOverrides.toMap())
-            }
-          },
-          colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFF1E1F22),
-            contentColor = Color.White
-          ),
-          shape = RoundedCornerShape(12.dp),
+      // Status footer showing automatic processing
+      if (matchPlan != null && rebuildState is RebuildUiState.Idle) {
+        HorizontalDivider(color = Color(0xFFF2F4F7), thickness = 1.dp)
+        Row(
           modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
-            .testTag("btn_confirm_classification")
+            .padding(16.dp),
+          horizontalArrangement = Arrangement.Center,
+          verticalAlignment = Alignment.CenterVertically
         ) {
-          Icon(
-            imageVector = Icons.Default.Check,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(20.dp)
-          )
-          Spacer(modifier = Modifier.width(8.dp))
           Text(
-            text = "Confirmar y aplicar",
+            text = "Iniciando inyección y clasificación automática...",
             fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFF2563EB)
           )
-        }
-      }
-    }
-  }
-
-  // Dialog to manually pick textures to assign to target container
-  if (textureTargetingPickerFor != null) {
-    val target = textureTargetingPickerFor!!
-    val targetName = if (target == TargetContainer.GTA3) "Exteriores (gta3)" else "Interiores (gta_int)"
-
-    Dialog(onDismissRequest = { textureTargetingPickerFor = null }) {
-      Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(8.dp)
-      ) {
-        Column(
-          modifier = Modifier
-            .padding(16.dp)
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Column {
-              Text(
-                text = "Asignar a $targetName",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E1F22)
-              )
-              Text(
-                text = "Selecciona o marca las texturas para este contenedor",
-                fontSize = 12.sp,
-                color = Color(0xFF6B7280)
-              )
-            }
-            IconButton(
-              onClick = { textureTargetingPickerFor = null },
-              modifier = Modifier.size(36.dp)
-            ) {
-              Icon(imageVector = Icons.Default.Close, contentDescription = "Cerrar")
-            }
-          }
-
-          Spacer(modifier = Modifier.height(12.dp))
-
-          // Quick action: Assign ALL textures to this container
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            Button(
-              onClick = {
-                allTextures.forEach { entry ->
-                  textureOverrides[entry.name.lowercase()] = target
-                }
-                textureTargetingPickerFor = null
-              },
-              colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF2563EB),
-                contentColor = Color.White
-              ),
-              shape = RoundedCornerShape(8.dp),
-              modifier = Modifier.weight(1f)
-            ) {
-              Text(text = "Asignar todas (${allTextures.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          HorizontalDivider(color = Color(0xFFF3F4F6))
-
-          // Individual Texture Selector List
-          LazyColumn(
-            modifier = Modifier
-              .fillMaxWidth()
-              .height(300.dp)
-          ) {
-            items(allTextures, key = { it.name }) { tex ->
-              val currentTarget = textureOverrides[tex.name.lowercase()] ?: tex.targetContainer
-              val isAssignedToThis = currentTarget == target
-
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .clickable {
-                    if (isAssignedToThis) {
-                      val opposite = if (target == TargetContainer.GTA3) TargetContainer.GTA_INT else TargetContainer.GTA3
-                      textureOverrides[tex.name.lowercase()] = opposite
-                    } else {
-                      textureOverrides[tex.name.lowercase()] = target
-                    }
-                  }
-                  .padding(vertical = 10.dp, horizontal = 4.dp)
-              ) {
-                Icon(
-                  imageVector = if (isAssignedToThis) Icons.Default.CheckCircle else Icons.Default.Close,
-                  contentDescription = null,
-                  tint = if (isAssignedToThis) Color(0xFF16A34A) else Color(0xFFD1D5DB),
-                  modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(
-                    text = tex.name,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF1E1F22)
-                  )
-                  Text(
-                    text = if (isAssignedToThis) "Asignado a $targetName" else "En ${if (currentTarget == TargetContainer.GTA3) "Exteriores" else "Interiores"}",
-                    fontSize = 11.sp,
-                    color = if (isAssignedToThis) Color(0xFF16A34A) else Color(0xFF9CA3AF)
-                  )
-                }
-              }
-              HorizontalDivider(color = Color(0xFFF9FAFB), thickness = 0.5.dp)
-            }
-          }
-
-          Spacer(modifier = Modifier.height(12.dp))
-
-          Button(
-            onClick = { textureTargetingPickerFor = null },
-            colors = ButtonDefaults.buttonColors(
-              containerColor = Color(0xFF1E1F22),
-              contentColor = Color.White
-            ),
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text(text = "Listo", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-          }
         }
       }
     }
@@ -634,14 +361,12 @@ private fun ContainerSectionHeader(
 
 @Composable
 private fun CleanAnalyzedTextureRow(
-  entry: RawTextureEntry,
-  isManuallyOverridden: Boolean = false,
-  onMoveToOpposite: (() -> Unit)? = null
+  entry: RawTextureEntry
 ) {
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(horizontal = 16.dp, vertical = 10.dp)
+      .padding(horizontal = 16.dp, vertical = 12.dp)
       .testTag("analyzed_texture_row_${entry.name}"),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
@@ -668,68 +393,31 @@ private fun CleanAnalyzedTextureRow(
             color = if (entry.hasAlpha) Color(0xFF7C3AED) else Color(0xFF4B5563)
           )
         }
-
-        if (isManuallyOverridden) {
-          Spacer(modifier = Modifier.width(6.dp))
-          Box(
-            modifier = Modifier
-              .clip(RoundedCornerShape(3.dp))
-              .background(Color(0xFFFEF3C7))
-              .padding(horizontal = 5.dp, vertical = 1.dp)
-          ) {
-            Text(
-              text = "MANUAL",
-              fontSize = 9.sp,
-              fontWeight = FontWeight.Bold,
-              color = Color(0xFFD97706)
-            )
-          }
-        }
       }
 
-      val reasonLabel = if (isManuallyOverridden) {
-        "Selección manual del usuario"
-      } else {
-        when (entry.matchReason) {
-          TextureMatchReason.FOLDER_EXPLICIT -> "Carpeta: ${entry.folderName.ifEmpty { "Ruta" }}"
-          TextureMatchReason.DFF_MODEL_LINK -> "Modelo 3D DFF"
-          TextureMatchReason.GAME_CATALOG_MATCH -> "Catálogo oficial del juego"
-          TextureMatchReason.ARCHIVE_NAME_SEMANTICS -> "Nombre del archivo comprimido"
-          TextureMatchReason.TEXTURE_NAME_SEMANTICS -> "Prefijo de textura"
-          TextureMatchReason.DEFAULT_EXTERIOR_PROBABILITY -> "Probabilidad de exteriores"
-        }
+      val reasonLabel = when (entry.matchReason) {
+        TextureMatchReason.FOLDER_EXPLICIT -> "Carpeta: ${entry.folderName.ifEmpty { "Ruta" }}"
+        TextureMatchReason.DFF_MODEL_LINK -> "Modelo 3D DFF"
+        TextureMatchReason.GAME_CATALOG_MATCH -> "Catálogo oficial del juego"
+        TextureMatchReason.ARCHIVE_NAME_SEMANTICS -> "Nombre del archivo comprimido"
+        TextureMatchReason.TEXTURE_NAME_SEMANTICS -> "Prefijo de textura"
+        TextureMatchReason.DEFAULT_EXTERIOR_PROBABILITY -> "Probabilidad de exteriores"
       }
       Text(
         text = reasonLabel,
         fontSize = 11.5.sp,
         fontWeight = FontWeight.Normal,
-        color = if (isManuallyOverridden) Color(0xFFD97706) else Color(0xFF6B7280)
+        color = Color(0xFF6B7280)
       )
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(
-        text = ImgArchiveReader.formatFileSize(entry.sizeBytes),
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Normal,
-        color = Color(0xFF6B7280),
-        modifier = Modifier.padding(end = 8.dp)
-      )
-
-      if (onMoveToOpposite != null) {
-        IconButton(
-          onClick = onMoveToOpposite,
-          modifier = Modifier.size(32.dp)
-        ) {
-          Icon(
-            imageVector = Icons.Default.Edit,
-            contentDescription = "Cambiar contenedor",
-            tint = Color(0xFF9CA3AF),
-            modifier = Modifier.size(16.dp)
-          )
-        }
-      }
-    }
+    Text(
+      text = ImgArchiveReader.formatFileSize(entry.sizeBytes),
+      fontSize = 12.5.sp,
+      fontWeight = FontWeight.Normal,
+      color = Color(0xFF6B7280),
+      modifier = Modifier.padding(start = 12.dp)
+    )
   }
 }
 
@@ -781,7 +469,12 @@ fun ModImplementationSummaryView(
   fallbackMessage: String,
   onClose: () -> Unit
 ) {
-  // Remains on screen until user explicitly presses "Listo"
+  // Auto-close in 2 seconds if user does not touch
+  LaunchedEffect(Unit) {
+    delay(2000L)
+    onClose()
+  }
+
   Column(
     modifier = Modifier
       .fillMaxWidth()

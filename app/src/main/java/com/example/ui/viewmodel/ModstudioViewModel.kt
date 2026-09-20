@@ -8,7 +8,6 @@ import com.example.data.analyzer.DffMatchEngine
 import com.example.data.analyzer.MatchPlan
 import com.example.data.analyzer.ModAnalysisResult
 import com.example.data.analyzer.ModDffAnalyzer
-import com.example.data.analyzer.TargetContainer
 import com.example.data.local.entity.HistoryEntry
 import com.example.data.local.entity.ModFileEntry
 import com.example.data.repository.ContainerSearchResult
@@ -470,7 +469,9 @@ class ModstudioViewModel(application: Application) : AndroidViewModel(applicatio
           category = "DFF_MATCH"
         )
 
-        // Wait for user to review classification and press "Confirmar y aplicar" in the UI
+        // AUTOMATION: Automatically start rebuilding and deploying without requiring manual button click
+        delay(700L)
+        executeRebuild(plan)
       } catch (t: Throwable) {
         t.printStackTrace()
         _matchUiState.value = MatchUiState.Error("Error al realizar match: ${t.localizedMessage ?: "error desconocido"}")
@@ -478,7 +479,7 @@ class ModstudioViewModel(application: Application) : AndroidViewModel(applicatio
     }
   }
 
-  fun executeRebuild(plan: MatchPlan, textureOverrides: Map<String, TargetContainer> = emptyMap()) {
+  fun executeRebuild(plan: MatchPlan) {
     viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
       _rebuildUiState.value = RebuildUiState.Rebuilding("Iniciando inyección y reconstrucción...", 0.05f)
       try {
@@ -486,7 +487,6 @@ class ModstudioViewModel(application: Application) : AndroidViewModel(applicatio
           plan = plan,
           modUri = activeModUri,
           modFile = activeModFile,
-          textureOverrides = textureOverrides,
           onProgress = { msg, prog ->
             _rebuildUiState.value = RebuildUiState.Rebuilding(msg, prog)
           }
