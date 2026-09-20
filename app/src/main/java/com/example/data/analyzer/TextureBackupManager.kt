@@ -49,18 +49,20 @@ class TextureBackupManager(private val context: Context) {
   suspend fun copyTextures(
     onProgress: (suspend (String) -> Unit)? = null
   ): TextureCopyResult = withContext(Dispatchers.IO) {
-    val gpu = GpuDetector.detectGpuFormat()
-    onProgress?.invoke("Detectando GPU: ${gpu.displayName}...")
-
-    val exteriorDir = getExteriorTexturesDir()
-    val interiorDir = getInteriorTexturesDir()
-
     val storageRoot = Environment.getExternalStorageDirectory()
     val dataDir = File(storageRoot, "Android/data/com.rockstargames.gtasa/files/texdb")
     val obbDir = File(storageRoot, "Android/obb/com.rockstargames.gtasa")
 
+    val gpu = GpuDetector.detectGpuFormat(dataDir)
+    onProgress?.invoke("GPU detectada: ${gpu.displayName} (${gpu.extension.uppercase(Locale.ROOT)})")
+
+    val exteriorDir = getExteriorTexturesDir()
+    val interiorDir = getInteriorTexturesDir()
+
     var exteriorCopied = 0
     var interiorCopied = 0
+
+    val allKnownGpus = listOf("dxt", "etc", "pvr", "unc")
 
     // Helper: copy disk file if newer or different size
     fun copyFileIfNeeded(source: File, destDir: File): Boolean {
@@ -81,20 +83,67 @@ class TextureBackupManager(private val context: Context) {
       }
     }
 
-    // Helper: is texture file of interest?
-    fun isRelevantTextureFile(fileName: String, targetPrefix: String, preferredGpu: String): Boolean {
+    // Purge files belonging to other GPUs to prevent filling storage
+    fun purgeOtherGpuFiles(dir: File, effectiveGpu: String) {
+      if (!dir.exists() || !dir.isDirectory) return
+      val otherGpus = allKnownGpus.filter { it != effectiveGpu }
+      dir.listFiles()?.forEach { file ->
+        val lower = file.name.lowercase(Locale.ROOT)
+        val isOtherGpu = otherGpus.any { other -> lower.contains(".$other.") || lower.endsWith(".$other") }
+        if (isOtherGpu) {
+          try {
+            file.delete()
+          } catch (_: Exception) {}
+        }
+      }
+    }
+
+    // Resolves whether candidates contain files for preferred GPU, or another single GPU
+    fun resolveEffectiveGpu(candidates: Collection<String>, targetPrefix: String, preferredGpu: String): String {
+      val prefixCandidates = candidates.filter { it.lowercase(Locale.ROOT).startsWith(targetPrefix) }
+      val preferredMatch = prefixCandidates.any { candidate ->
+        val lower = candidate.lowercase(Locale.ROOT)
+        lower.contains(".$preferredGpu.") || lower.endsWith(".$preferredGpu")
+      }
+      if (preferredMatch) return preferredGpu
+
+      for (other in allKnownGpus) {
+        if (other != preferredGpu && prefixCandidates.any { candidate ->
+          val lower = candidate.lowercase(Locale.ROOT)
+          lower.contains(".$other.") || lower.endsWith(".$other")
+        }) {
+          return other
+        }
+      }
+      return preferredGpu
+    }
+
+    // Helper: Strictly matches ONLY the 3 files of the specific GPU (.dat, .txd, .toc) and manifest (.txt)
+    fun isSelectedGpuFile(fileName: String, targetPrefix: String, effectiveGpu: String): Boolean {
       val lower = fileName.lowercase(Locale.ROOT)
-      // Check prefix (gta3 or gta_int)
       if (!lower.startsWith(targetPrefix)) return false
 
-      // Always include .txt list
-      if (lower == "$targetPrefix.txt") return true
+      // Strictly reject any file belonging to other GPUs
+      val otherGpus = allKnownGpus.filter { it != effectiveGpu }
+      if (otherGpus.any { other -> lower.contains(".$other.") || lower.endsWith(".$other") }) {
+        return false
+      }
 
-      // Any matching GPU format (.dxt., .etc., .pvr., .unc.)
-      if (lower.contains(".$preferredGpu.") || lower.endsWith(".$preferredGpu")) return true
+      // Check for the 3 specific files of this GPU: .dat, .txd, .toc
+      val expectedExtensions = listOf(".dat", ".txd", ".toc")
+      for (ext in expectedExtensions) {
+        if (lower == "$targetPrefix.$effectiveGpu$ext" || (lower.startsWith("$targetPrefix.$effectiveGpu.") && lower.endsWith(ext))) {
+          return true
+        }
+      }
 
-      // Include general texture extensions
-      if (lower.endsWith(".dat") || lower.endsWith(".toc") || lower.endsWith(".tmb") || lower.endsWith(".txd")) {
+      // Manifest .txt (optional tiny text file)
+      if (lower == "$targetPrefix.txt" || lower == "$targetPrefix.$effectiveGpu.txt") {
+        return true
+      }
+
+      // Generic files if no GPU infix exists (e.g. gta3.dat, gta3.txd, gta3.toc)
+      if (lower == "$targetPrefix.dat" || lower == "$targetPrefix.txd" || lower == "$targetPrefix.toc") {
         return true
       }
 
@@ -102,86 +151,123 @@ class TextureBackupManager(private val context: Context) {
     }
 
     // 1. Scan external disk folders first (Android/data/.../texdb/gta3 and texdb/gta_int)
-    onProgress?.invoke("Examinando carpetas de texturas en Android/data...")
     val diskGta3Dir = File(dataDir, "gta3")
     val diskGtaIntDir = File(dataDir, "gta_int")
 
     if (diskGta3Dir.exists() && diskGta3Dir.canRead()) {
-      diskGta3Dir.listFiles()?.forEach { file ->
-        if (file.isFile && isRelevantTextureFile(file.name, "gta3", gpu.extension)) {
+      val candidateFiles = diskGta3Dir.listFiles()?.filter { it.isFile } ?: emptyList()
+      val effectiveGpu = resolveEffectiveGpu(candidateFiles.map { it.name }, "gta3", gpu.extension)
+      purgeOtherGpuFiles(exteriorDir, effectiveGpu)
+      onProgress?.invoke("Respaldando 3 archivos de texturas exteriores ($effectiveGpu)...")
+
+      candidateFiles.forEach { file ->
+        if (isSelectedGpuFile(file.name, "gta3", effectiveGpu)) {
           if (copyFileIfNeeded(file, exteriorDir)) exteriorCopied++
         }
       }
     }
 
     if (diskGtaIntDir.exists() && diskGtaIntDir.canRead()) {
-      diskGtaIntDir.listFiles()?.forEach { file ->
-        if (file.isFile && isRelevantTextureFile(file.name, "gta_int", gpu.extension)) {
+      val candidateFiles = diskGtaIntDir.listFiles()?.filter { it.isFile } ?: emptyList()
+      val effectiveGpu = resolveEffectiveGpu(candidateFiles.map { it.name }, "gta_int", gpu.extension)
+      purgeOtherGpuFiles(interiorDir, effectiveGpu)
+      onProgress?.invoke("Respaldando 3 archivos de texturas interiores ($effectiveGpu)...")
+
+      candidateFiles.forEach { file ->
+        if (isSelectedGpuFile(file.name, "gta_int", effectiveGpu)) {
           if (copyFileIfNeeded(file, interiorDir)) interiorCopied++
         }
       }
     }
 
     // Also check root of texdb if gta3/gta_int files were stored flat
-    if (dataDir.exists() && dataDir.canRead()) {
-      dataDir.listFiles()?.forEach { file ->
-        if (file.isFile) {
-          if (isRelevantTextureFile(file.name, "gta3", gpu.extension)) {
-            if (copyFileIfNeeded(file, exteriorDir)) exteriorCopied++
-          } else if (isRelevantTextureFile(file.name, "gta_int", gpu.extension)) {
-            if (copyFileIfNeeded(file, interiorDir)) interiorCopied++
-          }
+    if ((exteriorCopied == 0 || interiorCopied == 0) && dataDir.exists() && dataDir.canRead()) {
+      val flatFiles = dataDir.listFiles()?.filter { it.isFile } ?: emptyList()
+      val gta3EffectiveGpu = resolveEffectiveGpu(flatFiles.map { it.name }, "gta3", gpu.extension)
+      val gtaIntEffectiveGpu = resolveEffectiveGpu(flatFiles.map { it.name }, "gta_int", gpu.extension)
+
+      purgeOtherGpuFiles(exteriorDir, gta3EffectiveGpu)
+      purgeOtherGpuFiles(interiorDir, gtaIntEffectiveGpu)
+
+      flatFiles.forEach { file ->
+        if (exteriorCopied == 0 && isSelectedGpuFile(file.name, "gta3", gta3EffectiveGpu)) {
+          if (copyFileIfNeeded(file, exteriorDir)) exteriorCopied++
+        } else if (interiorCopied == 0 && isSelectedGpuFile(file.name, "gta_int", gtaIntEffectiveGpu)) {
+          if (copyFileIfNeeded(file, interiorDir)) interiorCopied++
         }
       }
     }
 
-    // 2. Scan OBB zip archives if disk files are empty or incomplete
-    if (obbDir.exists() && obbDir.canRead()) {
-      onProgress?.invoke("Examinando paquetes OBB para texturas de ${gpu.extension}...")
+    // 2. Scan OBB zip archives if disk files were not found
+    if ((exteriorCopied == 0 || interiorCopied == 0) && obbDir.exists() && obbDir.canRead()) {
+      onProgress?.invoke("Examinando OBB para los 3 archivos de texturas de ${gpu.extension}...")
       val obbFiles = obbDir.listFiles { _, name -> name.endsWith(".obb", ignoreCase = true) } ?: emptyArray()
 
       for (obb in obbFiles) {
         try {
           ZipFile(obb).use { zip ->
-            val entries = zip.entries()
-            while (entries.hasMoreElements()) {
-              val entry = entries.nextElement()
-              if (entry.isDirectory) continue
-              val entryName = entry.name.lowercase(Locale.ROOT)
+            val entriesList = mutableListOf<java.util.zip.ZipEntry>()
+            val enumEntries = zip.entries()
+            while (enumEntries.hasMoreElements()) {
+              val entry = enumEntries.nextElement()
+              if (!entry.isDirectory) {
+                entriesList.add(entry)
+              }
+            }
 
-              // Check if entry is in texdb/gta3 or texdb/gta_int
-              val isGta3 = entryName.contains("texdb/gta3/") || entryName.startsWith("gta3/") ||
-                (entryName.startsWith("texdb/") && entryName.contains("gta3."))
-              val isGtaInt = entryName.contains("texdb/gta_int/") || entryName.startsWith("gta_int/") ||
-                (entryName.startsWith("texdb/") && entryName.contains("gta_int."))
+            val gta3Entries = entriesList.filter { entry ->
+              val lower = entry.name.lowercase(Locale.ROOT)
+              lower.contains("texdb/gta3/") || lower.startsWith("gta3/") ||
+                (lower.startsWith("texdb/") && lower.contains("gta3."))
+            }
+            val gtaIntEntries = entriesList.filter { entry ->
+              val lower = entry.name.lowercase(Locale.ROOT)
+              lower.contains("texdb/gta_int/") || lower.startsWith("gta_int/") ||
+                (lower.startsWith("texdb/") && lower.contains("gta_int."))
+            }
 
-              val simpleName = File(entry.name).name
+            val gta3EffectiveGpu = resolveEffectiveGpu(gta3Entries.map { File(it.name).name }, "gta3", gpu.extension)
+            val gtaIntEffectiveGpu = resolveEffectiveGpu(gtaIntEntries.map { File(it.name).name }, "gta_int", gpu.extension)
 
-              if (isGta3 && isRelevantTextureFile(simpleName, "gta3", gpu.extension)) {
-                val targetFile = File(exteriorDir, simpleName)
-                if (!targetFile.exists() || targetFile.length() != entry.size) {
-                  zip.getInputStream(entry).use { inStream ->
-                    FileOutputStream(targetFile).use { outStream ->
-                      inStream.copyTo(outStream)
+            purgeOtherGpuFiles(exteriorDir, gta3EffectiveGpu)
+            purgeOtherGpuFiles(interiorDir, gtaIntEffectiveGpu)
+
+            if (exteriorCopied == 0) {
+              for (entry in gta3Entries) {
+                val simpleName = File(entry.name).name
+                if (isSelectedGpuFile(simpleName, "gta3", gta3EffectiveGpu)) {
+                  val targetFile = File(exteriorDir, simpleName)
+                  if (!targetFile.exists() || targetFile.length() != entry.size) {
+                    zip.getInputStream(entry).use { inStream ->
+                      FileOutputStream(targetFile).use { outStream ->
+                        inStream.copyTo(outStream)
+                      }
                     }
                   }
+                  exteriorCopied++
                 }
-                exteriorCopied++
-              } else if (isGtaInt && isRelevantTextureFile(simpleName, "gta_int", gpu.extension)) {
-                val targetFile = File(interiorDir, simpleName)
-                if (!targetFile.exists() || targetFile.length() != entry.size) {
-                  zip.getInputStream(entry).use { inStream ->
-                    FileOutputStream(targetFile).use { outStream ->
-                      inStream.copyTo(outStream)
+              }
+            }
+
+            if (interiorCopied == 0) {
+              for (entry in gtaIntEntries) {
+                val simpleName = File(entry.name).name
+                if (isSelectedGpuFile(simpleName, "gta_int", gtaIntEffectiveGpu)) {
+                  val targetFile = File(interiorDir, simpleName)
+                  if (!targetFile.exists() || targetFile.length() != entry.size) {
+                    zip.getInputStream(entry).use { inStream ->
+                      FileOutputStream(targetFile).use { outStream ->
+                        inStream.copyTo(outStream)
+                      }
                     }
                   }
+                  interiorCopied++
                 }
-                interiorCopied++
               }
             }
           }
         } catch (_: Exception) {
-          // Gracefully continue searching
+          // Gracefully continue
         }
       }
     }

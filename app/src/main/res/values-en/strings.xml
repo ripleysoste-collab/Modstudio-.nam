@@ -170,4 +170,9 @@
     <string name="game_backup_compress_completed">Compression completed!</string>
     <string name="game_backup_compress_timeout_expired">15-minute time limit reached. Temporary compressed archive was purged.</string>
     <string name="game_backup_compress_move_prompt">Move GTA_SA_Backup.zip to device storage</string>
+
+    <string name="shortcut_open_cache">Open cache</string>
+    <string name="shortcut_open_cache_long">Open cache explorer</string>
+    <string name="shortcut_open_backup">Open backup</string>
+    <string name="shortcut_open_backup_long">Open game backups</string>
 </resources>

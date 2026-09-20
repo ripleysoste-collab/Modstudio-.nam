@@ -154,4 +154,9 @@
     <string name="game_backup_action_compress">圧縮</string>
     <string name="game_backup_compressing">ファイルを圧縮中…</string>
     <string name="game_backup_share_all">バックアップを共有</string>
+
+    <string name="shortcut_open_cache">キャッシュを開く</string>
+    <string name="shortcut_open_cache_long">キャッシュエクスプローラーを開く</string>
+    <string name="shortcut_open_backup">バックアップを開く</string>
+    <string name="shortcut_open_backup_long">ゲームバックアップを開く</string>
 </resources>

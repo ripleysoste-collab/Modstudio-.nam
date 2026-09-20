@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.res.AssetManager
 import android.content.res.Resources
 import androidx.activity.ComponentActivity
@@ -100,6 +101,7 @@ import kotlinx.coroutines.delay
 import com.example.ui.theme.ModstudioTheme
 import com.example.ui.viewmodel.ModstudioViewModel
 import com.example.ui.viewmodel.SearchUiState
+import com.example.data.AppShortcutManager
 
 class LocalizedActivityContext(
   val activity: ComponentActivity,
@@ -115,15 +117,34 @@ class LocalizedActivityContext(
 
 class MainActivity : ComponentActivity() {
 
+  private val shortcutScreenState = mutableStateOf<ScreenState?>(null)
+
   override fun attachBaseContext(newBase: Context) {
     val langCode = LanguageManager.getInstance(newBase).getSavedLanguageCode()
     val localizedContext = LanguageManager.createLocalizedContext(newBase, langCode)
     super.attachBaseContext(localizedContext)
   }
 
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    AppShortcutManager.extractTargetScreen(intent)?.let { target ->
+      shortcutScreenState.value = target
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+
+    // Initialize launcher shortcuts ("Abrir cachés" and "Abrir backup")
+    AppShortcutManager.initShortcuts(this)
+
+    // Check if launched from a shortcut
+    AppShortcutManager.extractTargetScreen(intent)?.let { target ->
+      shortcutScreenState.value = target
+    }
+
     setContent {
       val context = LocalContext.current
       val languageManager = remember { LanguageManager.getInstance(context) }
@@ -132,6 +153,7 @@ class MainActivity : ComponentActivity() {
       val isDarkMode by themeManager.isDarkMode.collectAsStateWithLifecycle()
       val backupSettingsManager = remember { com.example.data.BackupSettingsManager.getInstance(this@MainActivity) }
       val isBackupEnabled by backupSettingsManager.isBackupEnabled.collectAsStateWithLifecycle()
+      val activeShortcutScreen by remember { shortcutScreenState }
 
       val localizedContext = remember(currentLanguageCode) {
         LanguageManager.createLocalizedContext(this@MainActivity, currentLanguageCode)
@@ -143,7 +165,8 @@ class MainActivity : ComponentActivity() {
         localizedContext.resources.configuration
       }
 
-      var showSplash by rememberSaveable { mutableStateOf(true) }
+      // If opened via shortcut, skip splash screen directly to the target view
+      var showSplash by rememberSaveable { mutableStateOf(activeShortcutScreen == null) }
 
       CompositionLocalProvider(
         LocalContext provides localizedActivityContext,
@@ -161,7 +184,8 @@ class MainActivity : ComponentActivity() {
               isDarkMode = isDarkMode,
               onToggleDarkMode = { themeManager.setDarkMode(it) },
               isBackupEnabled = isBackupEnabled,
-              onToggleBackupEnabled = { backupSettingsManager.setBackupEnabled(it) }
+              onToggleBackupEnabled = { backupSettingsManager.setBackupEnabled(it) },
+              shortcutTargetScreen = activeShortcutScreen
             )
           }
         }
@@ -192,11 +216,20 @@ fun ModstudioApp(
   onToggleDarkMode: (Boolean) -> Unit = {},
   isBackupEnabled: Boolean = true,
   onToggleBackupEnabled: (Boolean) -> Unit = {},
+  shortcutTargetScreen: ScreenState? = null,
   viewModel: ModstudioViewModel = viewModel()
 ) {
-  // Always starts at HOME on launch, but preserves screen across backgrounding/package installer
-  var currentScreen by rememberSaveable { mutableStateOf(ScreenState.HOME) }
+  // Always starts at HOME on launch, unless launched directly from App Shortcut
+  var currentScreen by rememberSaveable { mutableStateOf(shortcutTargetScreen ?: ScreenState.HOME) }
+  var openedViaShortcut by rememberSaveable { mutableStateOf(shortcutTargetScreen != null) }
   var activeContainerName by remember { mutableStateOf("gta3.img") }
+
+  LaunchedEffect(shortcutTargetScreen) {
+    if (shortcutTargetScreen != null) {
+      currentScreen = shortcutTargetScreen
+      openedViaShortcut = true
+    }
+  }
 
   // Direct, rock-solid screen routing backed by Room SQLite database
   when (currentScreen) {
@@ -242,7 +275,14 @@ fun ModstudioApp(
     }
     ScreenState.GAME_BACKUP -> {
       GameBackupScreen(
-        onBack = { currentScreen = ScreenState.FUNCTIONS },
+        onBack = {
+          if (openedViaShortcut) {
+            currentScreen = ScreenState.HOME
+            openedViaShortcut = false
+          } else {
+            currentScreen = ScreenState.FUNCTIONS
+          }
+        },
         isDarkMode = isDarkMode
       )
     }
@@ -277,7 +317,14 @@ fun ModstudioApp(
     ScreenState.TXD_EXPLORER -> {
       TxdExplorerScreen(
         viewModel = viewModel,
-        onBack = { currentScreen = ScreenState.HISTORY }
+        onBack = {
+          if (openedViaShortcut) {
+            currentScreen = ScreenState.HOME
+            openedViaShortcut = false
+          } else {
+            currentScreen = ScreenState.HISTORY
+          }
+        }
       )
     }
     ScreenState.SCRIPT_EXPLORER -> {

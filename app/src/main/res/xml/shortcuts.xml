@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="open_cache"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_cache"
+        android:shortcutShortLabel="@string/shortcut_open_cache"
+        android:shortcutLongLabel="@string/shortcut_open_cache_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aistudio.modstudio.wzvk"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="shortcut_action" android:value="open_cache" />
+        </intent>
+        <categories android:name="android.intent.category.DEFAULT" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="open_backup"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_backup"
+        android:shortcutShortLabel="@string/shortcut_open_backup"
+        android:shortcutLongLabel="@string/shortcut_open_backup_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aistudio.modstudio.wzvk"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="shortcut_action" android:value="open_backup" />
+        </intent>
+        <categories android:name="android.intent.category.DEFAULT" />
+    </shortcut>
+</shortcuts>

@@ -154,4 +154,9 @@
     <string name="game_backup_action_compress">Comprimir</string>
     <string name="game_backup_compressing">Comprimindo arquivos…</string>
     <string name="game_backup_share_all">Compartilhar backup</string>
+
+    <string name="shortcut_open_cache">Abrir cache</string>
+    <string name="shortcut_open_cache_long">Abrir explorador de cache</string>
+    <string name="shortcut_open_backup">Abrir backup</string>
+    <string name="shortcut_open_backup_long">Abrir backups do jogo</string>
 </resources>

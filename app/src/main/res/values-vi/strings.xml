@@ -154,4 +154,9 @@
     <string name="game_backup_action_compress">Nén</string>
     <string name="game_backup_compressing">Đang nén tập tin…</string>
     <string name="game_backup_share_all">Chia sẻ sao lưu</string>
+
+    <string name="shortcut_open_cache">Mở bộ nhớ đệm</string>
+    <string name="shortcut_open_cache_long">Mở trình khám phá bộ nhớ đệm</string>
+    <string name="shortcut_open_backup">Mở sao lưu</string>
+    <string name="shortcut_open_backup_long">Mở bản sao lưu trò chơi</string>
 </resources>

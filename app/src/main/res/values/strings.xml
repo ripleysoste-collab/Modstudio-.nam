@@ -192,4 +192,9 @@
     <string name="solution_btn_repair">Reparación</string>
     <string name="solution_btn_solved">Solucionado</string>
     <string name="solution_btn_repair_passive">Reparar</string>
+
+    <string name="shortcut_open_cache">Abrir cachés</string>
+    <string name="shortcut_open_cache_long">Abrir explorador de cachés</string>
+    <string name="shortcut_open_backup">Abrir backup</string>
+    <string name="shortcut_open_backup_long">Abrir respaldos del juego</string>
 </resources>
