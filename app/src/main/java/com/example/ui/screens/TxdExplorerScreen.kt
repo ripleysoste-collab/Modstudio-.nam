@@ -26,10 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
-import com.example.ui.components.TxdTextureViewerDialog
 import com.example.ui.viewmodel.ModstudioViewModel
 
 /**
@@ -80,9 +76,6 @@ fun TxdExplorerScreen(
   val dividerColor = if (isDark) Color(0xFF262830) else Color(0xFFE5E7EB)
   val subtleDividerColor = if (isDark) Color(0xFF22242C) else Color(0xFFF2F4F7)
   val emptyTextColor = if (isDark) Color(0xFF6B7280) else Color(0xFFBBBBBB)
-
-  // Selected texture for the floating clean preview modal
-  var selectedTexture by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
 
   Box(
     modifier = modifier
@@ -213,12 +206,7 @@ fun TxdExplorerScreen(
               contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
             ) {
               items(effectiveExteriorTextures) { textureName ->
-                TxdFileItem(
-                  textureName = textureName,
-                  onBg = onBg,
-                  isDark = isDark,
-                  onClick = { selectedTexture = Pair(textureName, false) }
-                )
+                TxdFileItem(textureName = textureName, onBg = onBg, isDark = isDark)
               }
             }
           }
@@ -252,27 +240,12 @@ fun TxdExplorerScreen(
               contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
             ) {
               items(effectiveInteriorTextures) { textureName ->
-                TxdFileItem(
-                  textureName = textureName,
-                  onBg = onBg,
-                  isDark = isDark,
-                  onClick = { selectedTexture = Pair(textureName, true) }
-                )
+                TxdFileItem(textureName = textureName, onBg = onBg, isDark = isDark)
               }
             }
           }
         }
       }
-    }
-
-    // Floating clean modal to inspect and decode RenderWare textures
-    selectedTexture?.let { (texName, isInterior) ->
-      TxdTextureViewerDialog(
-        textureName = texName,
-        isInterior = isInterior,
-        onDismiss = { selectedTexture = null },
-        isDark = isDark
-      )
     }
   }
 }
@@ -281,15 +254,12 @@ fun TxdExplorerScreen(
 private fun TxdFileItem(
   textureName: String,
   onBg: Color,
-  isDark: Boolean,
-  onClick: () -> Unit
+  isDark: Boolean
 ) {
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .clickable(onClick = onClick)
-      .padding(horizontal = 6.dp, vertical = 6.dp)
-      .testTag("txd_item_$textureName")
+      .padding(horizontal = 6.dp, vertical = 5.dp)
   ) {
     Text(
       text = textureName,
@@ -299,7 +269,7 @@ private fun TxdFileItem(
       maxLines = 1,
       overflow = TextOverflow.Ellipsis
     )
-    Spacer(modifier = Modifier.height(5.dp))
+    Spacer(modifier = Modifier.height(4.dp))
     HorizontalDivider(
       color = if (isDark) Color(0xFF22242C) else Color(0xFFF2F3F5),
       thickness = 0.5.dp
