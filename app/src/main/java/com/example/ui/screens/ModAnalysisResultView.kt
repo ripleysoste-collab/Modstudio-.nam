@@ -49,7 +49,9 @@ import com.example.data.analyzer.MatchPlan
 import com.example.data.analyzer.ModAnalysisResult
 import com.example.data.analyzer.ModDffEntry
 import com.example.data.analyzer.ModImplementationSummary
+import com.example.data.analyzer.RawTextureEntry
 import com.example.data.analyzer.ScriptInstallItem
+import com.example.data.analyzer.TextureMatchReason
 import com.example.data.parser.ImgArchiveReader
 import com.example.ui.components.RotatingBallIndicator
 import com.example.ui.viewmodel.MatchUiState
@@ -115,7 +117,11 @@ fun ModAnalysisResultView(
             rebuildState is RebuildUiState.Success -> "Mod inyectado y ubicado en el juego"
             matchState is MatchUiState.Matched -> "Inyectando automáticamente..."
             matchState is MatchUiState.Matching -> "Identificando coincidencias..."
-            else -> "${result.totalDffFound} modelos .dff analizados"
+            else -> {
+              val dffText = if (result.totalDffFound > 0) "${result.totalDffFound} modelos .dff" else ""
+              val texText = if (result.totalTexturesFound > 0) "${result.totalTexturesFound} texturas .png" else ""
+              listOf(dffText, texText).filter { it.isNotEmpty() }.joinToString(" • ").ifEmpty { "Mod analizado" }
+            }
           },
           fontSize = 12.sp,
           color = Color(0xFF6B7280)
@@ -163,8 +169,10 @@ fun ModAnalysisResultView(
 
     val hasGta3 = result.gta3Entries.isNotEmpty()
     val hasGtaInt = result.gtaIntEntries.isNotEmpty()
+    val hasGta3Tex = result.gta3TextureEntries.isNotEmpty()
+    val hasGtaIntTex = result.gtaIntTextureEntries.isNotEmpty()
 
-    if (!hasGta3 && !hasGtaInt) {
+    if (!hasGta3 && !hasGtaInt && !hasGta3Tex && !hasGtaIntTex) {
       // Empty state
       Box(
         modifier = Modifier
@@ -173,7 +181,7 @@ fun ModAnalysisResultView(
         contentAlignment = Alignment.Center
       ) {
         Text(
-          text = "No se encontraron modelos .dff en el mod",
+          text = "No se encontraron modelos .dff ni texturas en el mod",
           fontSize = 14.sp,
           color = Color(0xFF6B7280)
         )
@@ -189,13 +197,14 @@ fun ModAnalysisResultView(
           .testTag("analyzed_dff_list"),
         contentPadding = PaddingValues(bottom = 16.dp)
       ) {
-        // SECTION 1: gta3.img
+        // SECTION 1: gta3.img (DFF Models)
         if (hasGta3) {
           item(key = "header_gta3") {
             ContainerSectionHeader(
               containerName = "gta3.img",
               containerType = "EXTERIORES",
-              count = result.gta3Entries.size
+              count = result.gta3Entries.size,
+              itemType = "dff"
             )
           }
 
@@ -210,20 +219,65 @@ fun ModAnalysisResultView(
           }
         }
 
-        // SECTION 2: gta_int.img (Interior)
+        // SECTION 2: gta_int.img (DFF Models - Interior)
         if (hasGtaInt) {
           item(key = "header_gta_int") {
             Spacer(modifier = Modifier.height(if (hasGta3) 16.dp else 0.dp))
             ContainerSectionHeader(
               containerName = "gta_int.img",
               containerType = "INTERIORES",
-              count = result.gtaIntEntries.size
+              count = result.gtaIntEntries.size,
+              itemType = "dff"
             )
           }
 
           items(result.gtaIntEntries, key = { "gtaint_${it.relativePath}_${it.name}" }) { entry ->
             val matchItem = matchMap[entry.name.lowercase()]
             CleanAnalyzedDffRow(entry = entry, matchItem = matchItem)
+            HorizontalDivider(
+              modifier = Modifier.padding(horizontal = 16.dp),
+              color = Color(0xFFF3F4F6),
+              thickness = 0.8.dp
+            )
+          }
+        }
+
+        // SECTION 3: gta3 (Raw Textures - Exteriores)
+        if (hasGta3Tex) {
+          item(key = "header_tex_gta3") {
+            Spacer(modifier = Modifier.height(if (hasGta3 || hasGtaInt) 16.dp else 0.dp))
+            ContainerSectionHeader(
+              containerName = "gta3 (Texturas)",
+              containerType = "EXTERIORES",
+              count = result.gta3TextureEntries.size,
+              itemType = "png"
+            )
+          }
+
+          items(result.gta3TextureEntries, key = { "tex_gta3_${it.relativePath}_${it.name}" }) { entry ->
+            CleanAnalyzedTextureRow(entry = entry)
+            HorizontalDivider(
+              modifier = Modifier.padding(horizontal = 16.dp),
+              color = Color(0xFFF3F4F6),
+              thickness = 0.8.dp
+            )
+          }
+        }
+
+        // SECTION 4: gta_int (Raw Textures - Interiores)
+        if (hasGtaIntTex) {
+          item(key = "header_tex_gta_int") {
+            Spacer(modifier = Modifier.height(if (hasGta3 || hasGtaInt || hasGta3Tex) 16.dp else 0.dp))
+            ContainerSectionHeader(
+              containerName = "gta_int (Texturas)",
+              containerType = "INTERIORES",
+              count = result.gtaIntTextureEntries.size,
+              itemType = "png"
+            )
+          }
+
+          items(result.gtaIntTextureEntries, key = { "tex_gtaint_${it.relativePath}_${it.name}" }) { entry ->
+            CleanAnalyzedTextureRow(entry = entry)
             HorizontalDivider(
               modifier = Modifier.padding(horizontal = 16.dp),
               color = Color(0xFFF3F4F6),
@@ -244,7 +298,7 @@ fun ModAnalysisResultView(
           verticalAlignment = Alignment.CenterVertically
         ) {
           Text(
-            text = "Iniciando inyección automática de modelos...",
+            text = "Iniciando inyección y clasificación automática...",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = Color(0xFF2563EB)
@@ -259,7 +313,8 @@ fun ModAnalysisResultView(
 private fun ContainerSectionHeader(
   containerName: String,
   containerType: String,
-  count: Int
+  count: Int,
+  itemType: String = "dff"
 ) {
   Row(
     modifier = Modifier
@@ -296,10 +351,72 @@ private fun ContainerSectionHeader(
     }
 
     Text(
-      text = "$count dff",
+      text = "$count $itemType",
       fontSize = 13.sp,
       fontWeight = FontWeight.Medium,
       color = Color(0xFF6B7280)
+    )
+  }
+}
+
+@Composable
+private fun CleanAnalyzedTextureRow(
+  entry: RawTextureEntry
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 16.dp, vertical = 12.dp)
+      .testTag("analyzed_texture_row_${entry.name}"),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.SpaceBetween
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+          text = entry.name,
+          fontSize = 14.sp,
+          fontWeight = FontWeight.Medium,
+          color = Color(0xFF1E1F22)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (entry.hasAlpha) Color(0xFFEDE9FE) else Color(0xFFF3F4F6))
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+          Text(
+            text = entry.alphaFolderName,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (entry.hasAlpha) Color(0xFF7C3AED) else Color(0xFF4B5563)
+          )
+        }
+      }
+
+      val reasonLabel = when (entry.matchReason) {
+        TextureMatchReason.FOLDER_EXPLICIT -> "Carpeta: ${entry.folderName.ifEmpty { "Ruta" }}"
+        TextureMatchReason.DFF_MODEL_LINK -> "Modelo 3D DFF"
+        TextureMatchReason.GAME_CATALOG_MATCH -> "Catálogo oficial del juego"
+        TextureMatchReason.ARCHIVE_NAME_SEMANTICS -> "Nombre del archivo comprimido"
+        TextureMatchReason.TEXTURE_NAME_SEMANTICS -> "Prefijo de textura"
+        TextureMatchReason.DEFAULT_EXTERIOR_PROBABILITY -> "Probabilidad de exteriores"
+      }
+      Text(
+        text = reasonLabel,
+        fontSize = 11.5.sp,
+        fontWeight = FontWeight.Normal,
+        color = Color(0xFF6B7280)
+      )
+    }
+
+    Text(
+      text = ImgArchiveReader.formatFileSize(entry.sizeBytes),
+      fontSize = 12.5.sp,
+      fontWeight = FontWeight.Normal,
+      color = Color(0xFF6B7280),
+      modifier = Modifier.padding(start = 12.dp)
     )
   }
 }
@@ -446,7 +563,48 @@ fun ModImplementationSummaryView(
 
     Spacer(modifier = Modifier.height(22.dp))
 
-    // 3. Status
+    // 3. Raw Textures (.PNG)
+    Text(
+      text = "TEXTURAS CRUDAS (.PNG)",
+      fontSize = 11.5.sp,
+      fontWeight = FontWeight.Bold,
+      color = Color(0xFF6B7280),
+      letterSpacing = 0.5.sp
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    val extCount = summary?.rawTexturesExteriorCount ?: 0
+    val intCount = summary?.rawTexturesInteriorCount ?: 0
+    val totalTex = extCount + intCount
+    if (totalTex > 0) {
+      Text(
+        text = "$totalTex textura(s) clasificada(s): $extCount exteriores (gta3), $intCount interiores (gta_int)",
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color(0xFF1E1F22)
+      )
+      val withAlpha = summary?.rawTexturesWithAlphaCount ?: 0
+      val withoutAlpha = summary?.rawTexturesWithoutAlphaCount ?: 0
+      Text(
+        text = "$withAlpha con Alpha (transparencia) • $withoutAlpha sin Alpha (sólidas)",
+        fontSize = 12.5.sp,
+        color = Color(0xFF4B5563)
+      )
+      Text(
+        text = "Ubicación: Android/data/.../files/texdb/ (listas para importación TXD)",
+        fontSize = 12.sp,
+        color = Color(0xFF9CA3AF)
+      )
+    } else {
+      Text(
+        text = "Sin texturas crudas (.png) adicionales",
+        fontSize = 13.sp,
+        color = Color(0xFF9CA3AF)
+      )
+    }
+
+    Spacer(modifier = Modifier.height(22.dp))
+
+    // 4. Status
     Text(
       text = "ESTADO",
       fontSize = 11.5.sp,

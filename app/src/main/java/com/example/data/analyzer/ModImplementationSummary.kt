@@ -28,5 +28,11 @@ data class ModImplementationSummary(
   val scriptsFound: List<ScriptInstallItem> = emptyList(),
   val scriptsSearched: Boolean = true,
   val scriptsDeployedPath: String = "Android/data/com.rockstargames.gtasa/",
+  val rawTexturesFound: List<RawTextureEntry> = emptyList(),
+  val rawTexturesExteriorCount: Int = 0,
+  val rawTexturesInteriorCount: Int = 0,
+  val rawTexturesWithAlphaCount: Int = 0,
+  val rawTexturesWithoutAlphaCount: Int = 0,
+  val texturesDeployedPath: String = "Android/data/com.rockstargames.gtasa/files/texdb/",
   val errorMessage: String? = null
 )
