@@ -396,7 +396,7 @@ fun ModstudioHomeScreen(
       result = (modAnalysisState as ModAnalysisUiState.Analyzed).result,
       matchState = matchUiState,
       rebuildState = rebuildUiState,
-      onRebuild = { plan -> viewModel.executeRebuild(plan) },
+      onRebuild = { plan, overrides -> viewModel.executeRebuild(plan, overrides) },
       onClose = { viewModel.resetModAnalysis() }
     )
     return

@@ -267,43 +267,65 @@ object RawTextureClassifier {
   /**
    * Traverses path segments from deepest parent up to root.
    * Format folders like "With Alpha" or "Without Alpha" are transparently skipped.
+   * Cleans punctuation, accents, and evaluates compound names (e.g. "hora interior", "dentro", "casa", "afuera").
    */
   private fun detectPathIntent(relativePath: String): TargetContainer? {
     val clean = relativePath.replace('\\', '/')
     val segments = clean.split('/').dropLast(1).reversed() // Deepest parent first
 
     for (segment in segments) {
-      val s = segment.lowercase(Locale.ROOT).trim()
+      val raw = segment.lowercase(Locale.ROOT).trim()
+      // Remove accents/tildes and non-alphanumeric except spaces and underscores
+      val normalized = raw
+        .replace('á', 'a')
+        .replace('é', 'e')
+        .replace('í', 'i')
+        .replace('ó', 'o')
+        .replace('ú', 'u')
+        .replace('ñ', 'n')
+
       // Skip TXD Tool format subfolders
-      if (s in NEUTRAL_FOLDER_TOKENS) continue
-      if (s.contains("with alpha") || s.contains("without alpha") || s.contains("sin alpha") || s.contains("con alpha")) continue
+      if (normalized in NEUTRAL_FOLDER_TOKENS) continue
+      if (normalized.contains("with alpha") || normalized.contains("without alpha") ||
+          normalized.contains("sin alpha") || normalized.contains("con alpha") ||
+          normalized.contains("no alpha")) continue
 
-      val isInterior = s.contains("gta_int") ||
-        s.contains("gta.int") ||
-        s.contains("gtaint") ||
-        s.contains("gta int") ||
-        s.contains("interior") ||
-        s.contains("interiores") ||
-        s.contains("interiors") ||
-        s.contains("indoor") ||
-        s.contains("indoors") ||
-        s.contains("inside") ||
-        s.contains("dentro") ||
-        INTERIOR_ARCHIVE_KEYWORDS.any { s.contains(it) }
+      val isInterior = normalized.contains("gta_int") ||
+        normalized.contains("gta.int") ||
+        normalized.contains("gtaint") ||
+        normalized.contains("gta int") ||
+        normalized.contains("interior") ||
+        normalized.contains("interiores") ||
+        normalized.contains("interiors") ||
+        normalized.contains("indoor") ||
+        normalized.contains("indoors") ||
+        normalized.contains("inside") ||
+        normalized.contains("dentro") ||
+        normalized.contains("adentro") ||
+        normalized.contains("interna") ||
+        normalized.contains("interno") ||
+        normalized.contains("internos") ||
+        normalized.contains("internas") ||
+        INTERIOR_ARCHIVE_KEYWORDS.any { normalized.contains(it) }
 
-      val isExterior = s.contains("gta3") ||
-        s.contains("gta 3") ||
-        s.contains("gta_3") ||
-        s.contains("gta3.img") ||
-        s.contains("gta3.txt") ||
-        s.contains("exterior") ||
-        s.contains("exteriores") ||
-        s.contains("exteriors") ||
-        s.contains("outdoor") ||
-        s.contains("outdoors") ||
-        s.contains("outside") ||
-        s.contains("afuera") ||
-        EXTERIOR_ARCHIVE_KEYWORDS.any { s.contains(it) }
+      val isExterior = normalized.contains("gta3") ||
+        normalized.contains("gta 3") ||
+        normalized.contains("gta_3") ||
+        normalized.contains("gta3.img") ||
+        normalized.contains("gta3.txt") ||
+        normalized.contains("exterior") ||
+        normalized.contains("exteriores") ||
+        normalized.contains("exteriors") ||
+        normalized.contains("outdoor") ||
+        normalized.contains("outdoors") ||
+        normalized.contains("outside") ||
+        normalized.contains("afuera") ||
+        normalized.contains("fuera") ||
+        normalized.contains("externa") ||
+        normalized.contains("externo") ||
+        normalized.contains("externos") ||
+        normalized.contains("externas") ||
+        EXTERIOR_ARCHIVE_KEYWORDS.any { normalized.contains(it) }
 
       if (isInterior && !isExterior) return TargetContainer.GTA_INT
       if (isExterior && !isInterior) return TargetContainer.GTA3

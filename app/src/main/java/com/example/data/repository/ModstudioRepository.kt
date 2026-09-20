@@ -879,6 +879,7 @@ class ModstudioRepository(
     plan: MatchPlan,
     modUri: Uri? = null,
     modFile: File? = null,
+    textureOverrides: Map<String, TargetContainer> = emptyMap(),
     onProgress: (stepMessage: String, progressRatio: Float) -> Unit
   ): ModImplementationSummary = withContext(Dispatchers.IO) {
     try {
@@ -1066,13 +1067,22 @@ class ModstudioRepository(
           emptyList()
         }
 
-        val gta3Textures = rawTextures.filter { it.targetContainer == TargetContainer.GTA3 }
-        val gtaIntTextures = rawTextures.filter { it.targetContainer == TargetContainer.GTA_INT }
-        val withAlpha = rawTextures.count { it.hasAlpha }
-        val withoutAlpha = rawTextures.count { !it.hasAlpha }
+        val effectiveTextures = rawTextures.map { t ->
+          val override = textureOverrides[t.name.lowercase(Locale.ROOT)]
+          if (override != null) {
+            t.copy(targetContainer = override)
+          } else {
+            t
+          }
+        }
 
-        if (rawTextures.isNotEmpty()) {
-          onProgress("${rawTextures.size} texturas clasificadas (${gta3Textures.size} gta3, ${gtaIntTextures.size} gta_int). Sincronizando...", 0.99f)
+        val gta3Textures = effectiveTextures.filter { it.targetContainer == TargetContainer.GTA3 }
+        val gtaIntTextures = effectiveTextures.filter { it.targetContainer == TargetContainer.GTA_INT }
+        val withAlpha = effectiveTextures.count { it.hasAlpha }
+        val withoutAlpha = effectiveTextures.count { !it.hasAlpha }
+
+        if (effectiveTextures.isNotEmpty()) {
+          onProgress("${effectiveTextures.size} texturas clasificadas (${gta3Textures.size} gta3, ${gtaIntTextures.size} gta_int). Sincronizando...", 0.99f)
 
           // Register in Room DB for Explorador TXD
           try {
