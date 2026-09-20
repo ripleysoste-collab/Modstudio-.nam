@@ -161,18 +161,11 @@ jobs:
 
       - name: Publicar Release en GitHub
         uses: softprops/action-gh-release@v2
-        if: |
-          github.event_name != 'pull_request' &&
-          (
-            startsWith(github.ref, 'refs/tags/') ||
-            github.ref == 'refs/heads/main' ||
-            github.ref == 'refs/heads/master' ||
-            github.event.inputs.publish_release == 'true' ||
-            github.event_name == 'workflow_dispatch'
-          )
+        if: github.event_name != 'pull_request'
         with:
           tag_name: ${{ steps.prepare_apk.outputs.tag_name }}
           name: ${{ steps.prepare_apk.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
           body: |
             ## 🎮 Modstudio Android APK
             
@@ -186,7 +179,7 @@ jobs:
             - **SHA-256:** `${{ steps.prepare_apk.outputs.apk_sha256 }}`
             
             ### 📥 Descarga e Instalación
-            Descarga el archivo `Modstudio.apk` que aparece abajo en los archivos adjuntos (Assets) e instálalo directamente en tu dispositivo Android.
+            Descarga el archivo `Modstudio.apk` que aparece abajo en los archivos adjuntos (**Assets**) e instálalo directamente en tu dispositivo Android.
           files: |
             dist/Modstudio.apk
             dist/Modstudio.apk.sha256
@@ -196,12 +189,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Subir APK como Artefacto del Flujo (Artifacts)
+      - name: Subir APK como Artefacto del Flujo (Opcional)
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Modstudio-APK-${{ steps.prepare_apk.outputs.tag_name }}
           path: |
             dist/Modstudio.apk
             dist/Modstudio.apk.sha256
-          if-no-files-found: error
-          retention-days: 14
+          if-no-files-found: warn
+          retention-days: 1
