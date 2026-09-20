@@ -1,20 +1,29 @@
 package com.example.data.decoder
 
+import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
+import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
 import android.opengl.ETC1
+import android.os.Environment
+import com.example.data.parser.ImgArchiveReader
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.min
+import java.util.Locale
+import java.util.zip.ZipFile
 
 /**
- * High-performance texture decoder for GTA San Andreas RenderWare mobile textures.
- * Decodes DXT1, DXT3, DXT5, ETC1, and uncompressed RGBA/Paletted textures into Android Bitmaps.
+ * High-performance, authentic RenderWare texture decoder for GTA San Andreas mobile textures.
+ * Performs deep extraction across:
+ * 1. Loose texture assets (PNG, JPG, BMP, DDS)
+ * 2. RenderWare .TXD archives (inside gta3.img, gta_int.img or loose in texdb)
+ * 3. Mobile texdb cache (.dat + .toc + .txt)
+ *
+ * Strictly NO SIMULATION: if real binary texture bytes cannot be read,
+ * returns null so the UI can honestly inform the user.
  */
 object TxdTextureDecoder {
 
@@ -29,35 +38,75 @@ object TxdTextureDecoder {
   )
 
   data class DecodeResult(
-    val bitmap: Bitmap,
+    val bitmap: Bitmap?,
     val meta: TextureMeta,
-    val isProcedural: Boolean = false
+    val isDecoded: Boolean
   )
 
   /**
-   * Attempts to locate the binary texture within the texdb directory and decode it.
-   * If raw data is not accessible or still compiling, produces a high-fidelity
-   * visual texture canvas with RenderWare specifications.
+   * Attempts to locate the binary texture within the texdb directory, img archives,
+   * or obb/data folders, and decodes it into an authentic Android Bitmap.
    */
   fun decodeTexture(
+    context: Context,
     textureName: String,
     texdbDir: File?,
     isInterior: Boolean = false
   ): DecodeResult {
-    val cleanName = textureName.trim().removeSuffix(".png").removeSuffix(".bmp")
+    val cleanName = textureName.trim().removeSuffix(".png").removeSuffix(".bmp").removeSuffix(".jpg")
     val subDirName = if (isInterior) "gta_int" else "gta3"
-    val targetFolder = texdbDir?.let { File(it, subDirName) }
 
-    // Try finding in disk first
-    if (targetFolder != null && targetFolder.exists()) {
-      val foundResult = scanAndExtractFromFolder(cleanName, targetFolder, subDirName)
-      if (foundResult != null) {
-        return foundResult
+    // Search candidate directories
+    val storageRoot = Environment.getExternalStorageDirectory()
+    val candidateDirs = mutableListOf<File>()
+
+    // 1. App-specific copied textures folder
+    if (texdbDir != null) {
+      candidateDirs.add(File(texdbDir, subDirName))
+      candidateDirs.add(texdbDir)
+    }
+
+    // 2. Direct external game data directory
+    val gameTexdbDir = File(storageRoot, "Android/data/com.rockstargames.gtasa/files/texdb")
+    candidateDirs.add(File(gameTexdbDir, subDirName))
+    candidateDirs.add(gameTexdbDir)
+
+    // 3. Search for loose images or .dat/.toc in candidate directories
+    for (dir in candidateDirs) {
+      if (dir.exists() && dir.isDirectory) {
+        val extracted = scanAndExtractFromFolder(cleanName, dir, subDirName)
+        if (extracted != null && extracted.bitmap != null) {
+          return extracted
+        }
       }
     }
 
-    // High-fidelity fallback texture simulation matching GTA San Andreas original dimensions
-    return generateStylizedTextureBitmap(cleanName, subDirName)
+    // 4. Search in containers (containers/gta3.img, containers/gta_int.img, or in Android/data, obb)
+    val containerImg = findAndExtractFromImgContainers(context, cleanName, isInterior)
+    if (containerImg != null && containerImg.bitmap != null) {
+      return containerImg
+    }
+
+    // 5. Search inside OBB files directly if not yet copied to disk
+    val obbResult = searchInsideObb(cleanName, subDirName)
+    if (obbResult != null && obbResult.bitmap != null) {
+      return obbResult
+    }
+
+    // Honest result: Texture is indexed in game catalog, but binary data is not available on disk
+    return DecodeResult(
+      bitmap = null,
+      meta = TextureMeta(
+        name = cleanName,
+        width = 0,
+        height = 0,
+        format = "RenderWare (Sin extraer)",
+        hasAlpha = false,
+        sourceFile = "texdb/$subDirName",
+        sizeBytes = 0L
+      ),
+      isDecoded = false
+    )
   }
 
   private fun scanAndExtractFromFolder(
@@ -67,14 +116,14 @@ object TxdTextureDecoder {
   ): DecodeResult? {
     val files = folder.listFiles() ?: return null
 
-    // 1. Check for single extracted PNG/JPG/BMP if already converted
+    // 1. Direct image files (PNG, JPG, WEBP, BMP)
     val imageFile = files.firstOrNull {
       it.isFile && it.nameWithoutExtension.equals(textureName, ignoreCase = true) &&
-        (it.name.endsWith(".png", true) || it.name.endsWith(".jpg", true) || it.name.endsWith(".webp", true))
+        (it.name.endsWith(".png", true) || it.name.endsWith(".jpg", true) || it.name.endsWith(".webp", true) || it.name.endsWith(".bmp", true))
     }
     if (imageFile != null) {
       try {
-        val bmp = android.graphics.BitmapFactory.decodeFile(imageFile.absolutePath)
+        val bmp = BitmapFactory.decodeFile(imageFile.absolutePath)
         if (bmp != null) {
           return DecodeResult(
             bitmap = bmp,
@@ -82,47 +131,73 @@ object TxdTextureDecoder {
               name = textureName,
               width = bmp.width,
               height = bmp.height,
-              format = "PNG/RGBA",
+              format = "PNG/Bitmap",
               hasAlpha = bmp.hasAlpha(),
               sourceFile = "${containerLabel}/${imageFile.name}",
               sizeBytes = imageFile.length()
-            )
+            ),
+            isDecoded = true
           )
         }
       } catch (_: Exception) {}
     }
 
-    // 2. Check for .toc and .dat container file
-    val tocFile = files.firstOrNull { it.name.endsWith(".toc", ignoreCase = true) }
-    val datFile = files.firstOrNull { it.name.endsWith(".dat", ignoreCase = true) }
-
-    if (tocFile != null && datFile != null && datFile.length() > 0) {
+    // 2. Loose RenderWare .TXD file matching texture name
+    val txdFile = files.firstOrNull {
+      it.isFile && (it.nameWithoutExtension.equals(textureName, ignoreCase = true) || it.name.equals("$containerLabel.txd", ignoreCase = true)) &&
+        it.name.endsWith(".txd", ignoreCase = true)
+    }
+    if (txdFile != null && txdFile.length() > 0) {
       try {
-        val entry = parseTocForEntry(tocFile, textureName)
-        if (entry != null && entry.offset + entry.size <= datFile.length()) {
-          val rawBytes = ByteArray(entry.size)
-          RandomAccessFile(datFile, "r").use { raf ->
-            raf.seek(entry.offset)
-            raf.readFully(rawBytes)
-          }
-
-          val decoded = decodeRawBlock(rawBytes, entry.width, entry.height, entry.format)
-          if (decoded != null) {
-            return DecodeResult(
-              bitmap = decoded,
-              meta = TextureMeta(
-                name = textureName,
-                width = entry.width,
-                height = entry.height,
-                format = entry.format,
-                hasAlpha = entry.format.contains("DXT5") || entry.format.contains("RGBA"),
-                sourceFile = "${containerLabel}/${datFile.name}",
-                sizeBytes = entry.size.toLong()
-              )
-            )
-          }
+        val rawTxd = txdFile.readBytes()
+        val parsed = parseRenderWareTxd(rawTxd, textureName)
+        if (parsed != null) {
+          return DecodeResult(
+            bitmap = parsed.first,
+            meta = parsed.second.copy(sourceFile = "${containerLabel}/${txdFile.name}"),
+            isDecoded = true
+          )
         }
       } catch (_: Exception) {}
+    }
+
+    // 3. Mobile texdb .dat + .toc archive pair
+    val tocFiles = files.filter { it.name.endsWith(".toc", ignoreCase = true) }
+    val datFiles = files.filter { it.name.endsWith(".dat", ignoreCase = true) }
+
+    for (toc in tocFiles) {
+      val baseName = toc.nameWithoutExtension.substringBeforeLast(".")
+      val dat = datFiles.firstOrNull { it.nameWithoutExtension.startsWith(baseName) } ?: datFiles.firstOrNull()
+      if (dat != null && dat.length() > 0) {
+        val entry = findEntryInToc(toc, dat, textureName)
+        if (entry != null) {
+          try {
+            val rawBytes = ByteArray(entry.size)
+            RandomAccessFile(dat, "r").use { raf ->
+              raf.seek(entry.offset)
+              raf.readFully(rawBytes)
+            }
+
+            // Check if rawBytes is a standard DDS or PNG or raw DXT
+            val decoded = decodeImageBytes(rawBytes, entry.width, entry.height, entry.format)
+            if (decoded != null) {
+              return DecodeResult(
+                bitmap = decoded,
+                meta = TextureMeta(
+                  name = textureName,
+                  width = decoded.width,
+                  height = decoded.height,
+                  format = entry.format,
+                  hasAlpha = decoded.hasAlpha(),
+                  sourceFile = "${containerLabel}/${dat.name}",
+                  sizeBytes = entry.size.toLong()
+                ),
+                isDecoded = true
+              )
+            }
+          } catch (_: Exception) {}
+        }
+      }
     }
 
     return null
@@ -137,31 +212,277 @@ object TxdTextureDecoder {
     val format: String
   )
 
-  private fun parseTocForEntry(tocFile: File, targetName: String): TocEntry? {
+  /**
+   * Scans a .toc file (either text or binary index) to locate offset and size in .dat
+   */
+  private fun findEntryInToc(tocFile: File, datFile: File, targetName: String): TocEntry? {
+    val datLength = datFile.length()
+    if (datLength <= 0) return null
+
+    // A. Check if .toc is text-based (manifest style)
     try {
-      val lines = tocFile.readLines()
-      for (line in lines) {
-        val parts = line.split(Regex("[,\\s\\t]+")).filter { it.isNotBlank() }
-        if (parts.isNotEmpty()) {
-          val name = parts[0]
-          if (name.equals(targetName, ignoreCase = true)) {
+      tocFile.bufferedReader().useLines { lines ->
+        for (line in lines) {
+          val trimmed = line.trim()
+          if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("#")) continue
+          if (trimmed.contains(targetName, ignoreCase = true)) {
+            val parts = trimmed.split(Regex("[,\\s\\t=]+")).filter { it.isNotBlank() }
             val offset = parts.getOrNull(1)?.toLongOrNull() ?: 0L
             val size = parts.getOrNull(2)?.toIntOrNull() ?: 0
             val width = parts.getOrNull(3)?.toIntOrNull() ?: 256
             val height = parts.getOrNull(4)?.toIntOrNull() ?: 256
             val format = parts.getOrNull(5) ?: "DXT1"
-            return TocEntry(name, offset, size, width, height, format)
+            if (size > 0 && offset + size <= datLength) {
+              return TocEntry(targetName, offset, size, width, height, format)
+            }
           }
         }
       }
     } catch (_: Exception) {}
+
+    // B. Check binary .toc index
+    try {
+      val maxRead = minOf(tocFile.length(), 8 * 1024 * 1024L).toInt()
+      val buffer = ByteArray(maxRead)
+      FileInputStream(tocFile).use { it.read(buffer) }
+
+      val nameBytes = targetName.toByteArray(Charsets.US_ASCII)
+      val nameLen = nameBytes.size
+      val lowerTarget = targetName.lowercase(Locale.ROOT)
+
+      for (i in 0 until buffer.size - nameLen - 16) {
+        // Fast case-insensitive match
+        var match = true
+        for (k in 0 until nameLen) {
+          if (buffer[i + k].toInt().toChar().lowercaseChar() != lowerTarget[k]) {
+            match = false
+            break
+          }
+        }
+
+        if (match) {
+          val termByte = buffer[i + nameLen]
+          if (termByte == 0.toByte() || termByte == ' '.code.toByte()) {
+            val bb = ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN)
+            // Inspect 16 bytes after name boundary (32-byte fixed name slot)
+            val offsetsToCheck = listOf(i + 32, i + nameLen + 1, i + nameLen + 4, i + 24)
+            for (pos in offsetsToCheck) {
+              if (pos + 8 <= buffer.size) {
+                val off = bb.getInt(pos).toLong() and 0xFFFFFFFFL
+                val sz = bb.getInt(pos + 4)
+                if (off in 0 until datLength && sz in 16..(16 * 1024 * 1024) && off + sz <= datLength) {
+                  val w = if (pos + 12 <= buffer.size) bb.getShort(pos + 8).toInt() and 0xFFFF else 256
+                  val h = if (pos + 14 <= buffer.size) bb.getShort(pos + 10).toInt() and 0xFFFF else 256
+                  return TocEntry(targetName, off, sz, if (w in 4..4096) w else 256, if (h in 4..4096) h else 256, "DXT1")
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (_: Exception) {}
+
     return null
   }
 
   /**
-   * Decodes compressed raw texture bytes (DXT1, DXT5, ETC1, or RGBA32)
+   * Searches for textures embedded in RenderWare .TXD dictionaries inside .IMG containers.
    */
-  fun decodeRawBlock(data: ByteArray, width: Int, height: Int, format: String): Bitmap? {
+  private fun findAndExtractFromImgContainers(
+    context: Context,
+    textureName: String,
+    isInterior: Boolean
+  ): DecodeResult? {
+    val containersDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "containers")
+    val imgName = if (isInterior) "gta_int.img" else "gta3.img"
+    val containerFile = File(containersDir, imgName)
+
+    if (!containerFile.exists() || containerFile.length() < 2048) return null
+
+    try {
+      val rawEntries = ImgArchiveReader.readAllRawEntries(containerFile)
+      val txdEntries = rawEntries.filter { it.name.endsWith(".txd", ignoreCase = true) }
+
+      RandomAccessFile(containerFile, "r").use { raf ->
+        for (txdEntry in txdEntries) {
+          // If TXD name closely matches or is generic.txd
+          val isCandidate = txdEntry.name.contains(textureName, ignoreCase = true) ||
+            txdEntry.name.equals("generic.txd", ignoreCase = true) ||
+            txdEntry.name.equals("vehicle.txd", ignoreCase = true)
+
+          if (isCandidate && txdEntry.sizeBytes in 16..(32 * 1024 * 1024L)) {
+            val txdBytes = ByteArray(txdEntry.sizeBytes.toInt())
+            raf.seek(txdEntry.offsetSectors.toLong() * ImgArchiveReader.SECTOR_SIZE)
+            raf.readFully(txdBytes)
+
+            val parsed = parseRenderWareTxd(txdBytes, textureName)
+            if (parsed != null) {
+              return DecodeResult(
+                bitmap = parsed.first,
+                meta = parsed.second.copy(sourceFile = "$imgName / ${txdEntry.name}"),
+                isDecoded = true
+              )
+            }
+          }
+        }
+      }
+    } catch (_: Exception) {}
+
+    return null
+  }
+
+  /**
+   * Searches directly inside OBB zip archives for the texture.
+   */
+  private fun searchInsideObb(textureName: String, subDirName: String): DecodeResult? {
+    val storageRoot = Environment.getExternalStorageDirectory()
+    val obbDir = File(storageRoot, "Android/obb/com.rockstargames.gtasa")
+    if (!obbDir.exists() || !obbDir.canRead()) return null
+
+    val obbFiles = obbDir.listFiles { _, name -> name.endsWith(".obb", ignoreCase = true) } ?: return null
+
+    for (obb in obbFiles) {
+      try {
+        ZipFile(obb).use { zip ->
+          val entries = zip.entries()
+          while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            val lower = entry.name.lowercase(Locale.ROOT)
+
+            if (lower.contains(textureName.lowercase(Locale.ROOT)) &&
+              (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".bmp"))
+            ) {
+              val stream = zip.getInputStream(entry)
+              val bmp = BitmapFactory.decodeStream(stream)
+              if (bmp != null) {
+                return DecodeResult(
+                  bitmap = bmp,
+                  meta = TextureMeta(
+                    name = textureName,
+                    width = bmp.width,
+                    height = bmp.height,
+                    format = "PNG/Texture (OBB)",
+                    hasAlpha = bmp.hasAlpha(),
+                    sourceFile = "${obb.name}/${entry.name}",
+                    sizeBytes = entry.size
+                  ),
+                  isDecoded = true
+                )
+              }
+            }
+          }
+        }
+      } catch (_: Exception) {}
+    }
+    return null
+  }
+
+  /**
+   * Parses a RenderWare stream containing rwID_TEXTURENATIVE (0x15) chunks
+   * to extract and decode the texture.
+   */
+  fun parseRenderWareTxd(bytes: ByteArray, targetName: String): Pair<Bitmap, TextureMeta>? {
+    if (bytes.size < 64) return null
+    val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+
+    val nameBytes = targetName.toByteArray(Charsets.US_ASCII)
+    val lowerTarget = targetName.lowercase(Locale.ROOT)
+
+    for (i in 0 until bytes.size - 64) {
+      var match = true
+      for (k in nameBytes.indices) {
+        if (bytes[i + k].toInt().toChar().lowercaseChar() != lowerTarget[k]) {
+          match = false
+          break
+        }
+      }
+
+      if (match && (bytes[i + nameBytes.size] == 0.toByte() || bytes[i + nameBytes.size] == ' '.code.toByte())) {
+        val formatOffset = i + 64
+        if (formatOffset + 24 <= bytes.size) {
+          try {
+            val d3dFormat = bb.getInt(formatOffset + 4)
+            val width = bb.getShort(formatOffset + 8).toInt() and 0xFFFF
+            val height = bb.getShort(formatOffset + 10).toInt() and 0xFFFF
+            val depth = bytes[formatOffset + 12].toInt() and 0xFF
+            val dataSize = bb.getInt(formatOffset + 16)
+
+            if (width in 4..4096 && height in 4..4096 && dataSize in 16..(16 * 1024 * 1024) && formatOffset + 20 + dataSize <= bytes.size) {
+              val rawData = ByteArray(dataSize)
+              System.arraycopy(bytes, formatOffset + 20, rawData, 0, dataSize)
+
+              val formatStr = when (d3dFormat) {
+                0x31545844 -> "DXT1"
+                0x33545844 -> "DXT3"
+                0x35545844 -> "DXT5"
+                else -> if (depth == 32) "RGBA32" else "DXT1"
+              }
+
+              val decodedBmp = decodeImageBytes(rawData, width, height, formatStr)
+              if (decodedBmp != null) {
+                return Pair(
+                  decodedBmp,
+                  TextureMeta(
+                    name = targetName,
+                    width = width,
+                    height = height,
+                    format = formatStr,
+                    hasAlpha = formatStr.contains("DXT5") || formatStr.contains("RGBA") || depth == 32,
+                    sourceFile = "RenderWare .TXD",
+                    sizeBytes = dataSize.toLong()
+                  )
+                )
+              }
+            }
+          } catch (_: Exception) {}
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Decodes image bytes whether they are wrapped with DDS header, PNG header, BMP header, or raw blocks.
+   */
+  fun decodeImageBytes(data: ByteArray, width: Int, height: Int, format: String): Bitmap? {
+    if (data.isEmpty()) return null
+
+    // 1. Direct BitmapFactory for PNG, JPG, BMP
+    if (data.size >= 4 && (data[0] == 0x89.toByte() && data[1] == 0x50.toByte()) ||
+      (data[0] == 'B'.code.toByte() && data[1] == 'M'.code.toByte())
+    ) {
+      try {
+        val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
+        if (bmp != null) return bmp
+      } catch (_: Exception) {}
+    }
+
+    // 2. Microsoft DirectDraw Surface (DDS)
+    if (data.size > 128 && data[0] == 'D'.code.toByte() && data[1] == 'D'.code.toByte() && data[2] == 'S'.code.toByte() && data[3] == ' '.code.toByte()) {
+      val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+      val ddsHeight = bb.getInt(12)
+      val ddsWidth = bb.getInt(16)
+      val fourCC = bb.getInt(84)
+      val pixelDataOffset = 128
+      val rawPixels = ByteArray(data.size - pixelDataOffset)
+      System.arraycopy(data, pixelDataOffset, rawPixels, 0, rawPixels.size)
+
+      val ddsFormat = when (fourCC) {
+        0x31545844 -> "DXT1"
+        0x33545844 -> "DXT3"
+        0x35545844 -> "DXT5"
+        else -> "DXT1"
+      }
+      return decodeRawBlock(rawPixels, ddsWidth, ddsHeight, ddsFormat)
+    }
+
+    // 3. Raw blocks (DXT1, DXT5, ETC1, RGBA32)
+    val effectiveW = if (width > 0) width else 256
+    val effectiveH = if (height > 0) height else 256
+    return decodeRawBlock(data, effectiveW, effectiveH, format)
+  }
+
+  private fun decodeRawBlock(data: ByteArray, width: Int, height: Int, format: String): Bitmap? {
     if (width <= 0 || height <= 0 || data.isEmpty()) return null
     return try {
       when {
@@ -177,7 +498,8 @@ object TxdTextureDecoder {
   }
 
   // --- DXT1 DECODER ---
-  private fun decodeDxt1(data: ByteArray, width: Int, height: Int): Bitmap {
+  private fun decodeDxt1(data: ByteArray, width: Int, height: Int): Bitmap? {
+    if (width <= 0 || height <= 0) return null
     val pixels = IntArray(width * height)
     var bufferOffset = 0
     val numBlocksX = (width + 3) / 4
@@ -234,7 +556,8 @@ object TxdTextureDecoder {
   }
 
   // --- DXT5 DECODER ---
-  private fun decodeDxt5(data: ByteArray, width: Int, height: Int): Bitmap {
+  private fun decodeDxt5(data: ByteArray, width: Int, height: Int): Bitmap? {
+    if (width <= 0 || height <= 0) return null
     val pixels = IntArray(width * height)
     var bufferOffset = 0
     val numBlocksX = (width + 3) / 4
@@ -312,24 +635,29 @@ object TxdTextureDecoder {
   }
 
   // --- ETC1 DECODER ---
-  private fun decodeEtc1(data: ByteArray, width: Int, height: Int): Bitmap {
-    val inBuffer = ByteBuffer.allocateDirect(data.size).order(ByteOrder.nativeOrder())
-    inBuffer.put(data).position(0)
+  private fun decodeEtc1(data: ByteArray, width: Int, height: Int): Bitmap? {
+    return try {
+      val inBuffer = ByteBuffer.allocateDirect(data.size).order(ByteOrder.nativeOrder())
+      inBuffer.put(data).position(0)
 
-    val pixelSize = 2 // 565 format
-    val stride = width * pixelSize
-    val outBuffer = ByteBuffer.allocateDirect(height * stride).order(ByteOrder.nativeOrder())
+      val pixelSize = 2 // 565 format
+      val stride = width * pixelSize
+      val outBuffer = ByteBuffer.allocateDirect(height * stride).order(ByteOrder.nativeOrder())
 
-    ETC1.decodeImage(inBuffer, outBuffer, width, height, pixelSize, stride)
-    outBuffer.position(0)
+      ETC1.decodeImage(inBuffer, outBuffer, width, height, pixelSize, stride)
+      outBuffer.position(0)
 
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-    bitmap.copyPixelsFromBuffer(outBuffer)
-    return bitmap
+      val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+      bitmap.copyPixelsFromBuffer(outBuffer)
+      bitmap
+    } catch (_: Exception) {
+      null
+    }
   }
 
   // --- RGBA 32-BIT DECODER ---
-  private fun decodeRgba32(data: ByteArray, width: Int, height: Int): Bitmap {
+  private fun decodeRgba32(data: ByteArray, width: Int, height: Int): Bitmap? {
+    if (width <= 0 || height <= 0) return null
     val pixels = IntArray(width * height)
     var idx = 0
     for (i in pixels.indices) {
@@ -350,102 +678,5 @@ object TxdTextureDecoder {
     val g = ((c shr 5) and 0x3F) * 255 / 63
     val b = (c and 0x1F) * 255 / 31
     return Color.rgb(r, g, b)
-  }
-
-  /**
-   * Generates a pristine, highly-realistic RenderWare texture preview based on GTA SA texture conventions
-   */
-  fun generateStylizedTextureBitmap(textureName: String, containerLabel: String): DecodeResult {
-    val lower = textureName.lowercase()
-    val (width, height) = when {
-      lower.contains("hub") || lower.contains("64") -> Pair(64, 64)
-      lower.contains("128") || lower.contains("icon") || lower.contains("rad") -> Pair(128, 128)
-      lower.contains("512") || lower.contains("body") || lower.contains("skin") -> Pair(512, 512)
-      else -> Pair(256, 256)
-    }
-
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-
-    // Palette generation based on texture name hashing for deterministic, authentic coloring
-    val hash = textureName.hashCode()
-    val baseHue = (hash and 0x7FFFFFFF) % 360f
-
-    val baseColor = when {
-      lower.contains("water") || lower.contains("sea") -> Color.rgb(28, 107, 160)
-      lower.contains("asphalt") || lower.contains("road") || lower.contains("tar") -> Color.rgb(45, 47, 52)
-      lower.contains("grass") || lower.contains("tree") || lower.contains("plant") -> Color.rgb(56, 118, 29)
-      lower.contains("brick") || lower.contains("wall") || lower.contains("roof") -> Color.rgb(153, 51, 51)
-      lower.contains("radar") || lower.contains("map") -> Color.rgb(33, 85, 120)
-      lower.contains("glass") || lower.contains("window") -> Color.argb(190, 180, 220, 240)
-      lower.contains("metal") || lower.contains("chrome") || lower.contains("alum") -> Color.rgb(180, 185, 192)
-      else -> Color.HSVToColor(floatArrayOf(baseHue, 0.45f, 0.65f))
-    }
-
-    // Fill background texture
-    val bgPaint = Paint().apply {
-      color = baseColor
-      isAntiAlias = true
-    }
-    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-
-    // Draw textured grid / surface detail
-    val linePaint = Paint().apply {
-      color = Color.argb(40, 255, 255, 255)
-      strokeWidth = 2f
-      isAntiAlias = true
-    }
-
-    val step = width / 8
-    for (i in 0 until width step step) {
-      canvas.drawLine(i.toFloat(), 0f, i.toFloat(), height.toFloat(), linePaint)
-      canvas.drawLine(0f, i.toFloat(), width.toFloat(), i.toFloat(), linePaint)
-    }
-
-    // Accent pattern border
-    val borderPaint = Paint().apply {
-      color = Color.argb(80, 0, 0, 0)
-      style = Paint.Style.STROKE
-      strokeWidth = 4f
-    }
-    canvas.drawRect(2f, 2f, (width - 2).toFloat(), (height - 2).toFloat(), borderPaint)
-
-    // Center badge with texture acronym
-    val badgePaint = Paint().apply {
-      color = Color.argb(160, 0, 0, 0)
-      isAntiAlias = true
-    }
-    val badgeRadius = min(width, height) * 0.28f
-    canvas.drawCircle(width / 2f, height / 2f, badgeRadius, badgePaint)
-
-    // Text initials
-    val textPaint = Paint().apply {
-      color = Color.WHITE
-      textSize = badgeRadius * 0.65f
-      textAlign = Paint.Align.CENTER
-      isFakeBoldText = true
-      isAntiAlias = true
-    }
-
-    val acronym = textureName.take(3).uppercase()
-    val textBounds = Rect()
-    textPaint.getTextBounds(acronym, 0, acronym.length, textBounds)
-    canvas.drawText(acronym, width / 2f, height / 2f - textBounds.exactCenterY(), textPaint)
-
-    val format = if (width >= 256) "DXT1 (RGB)" else "DXT5 (RGBA)"
-
-    return DecodeResult(
-      bitmap = bitmap,
-      meta = TextureMeta(
-        name = textureName,
-        width = width,
-        height = height,
-        format = format,
-        hasAlpha = lower.contains("glass") || lower.contains("window") || lower.contains("icon"),
-        sourceFile = "$containerLabel/gta_texdb",
-        sizeBytes = (width * height / 2).toLong()
-      ),
-      isProcedural = true
-    )
   }
 }

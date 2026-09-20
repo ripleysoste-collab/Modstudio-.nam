@@ -2,16 +2,6 @@ package com.example.ui.components
 
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,10 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,10 +62,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * Floating clean modal dialog to view and inspect RenderWare GTA San Andreas textures.
- * Shows loading progress while parsing and reading from disk / raw GPU bytes,
- * then presents the decoded texture with a transparency checkerboard background
- * and detailed technical metadata.
+ * Floating clean modal dialog to view and inspect authentic RenderWare GTA San Andreas textures.
+ * Reads real texture blocks from disk / raw GPU bytes and presents the decoded texture with
+ * a transparency checkerboard background.
+ *
+ * If the physical texture block is not yet extracted to disk, displays an honest, technical
+ * status explaining that the texture is indexed in the game manifest but requires data sync.
+ * NEVER displays simulated or fake procedural images.
  */
 @Composable
 fun TxdTextureViewerDialog(
@@ -88,7 +82,7 @@ fun TxdTextureViewerDialog(
   var loadingMessage by remember { mutableStateOf("Localizando ruta del archivo...") }
   var decodeResult by remember { mutableStateOf<TxdTextureDecoder.DecodeResult?>(null) }
 
-  // Checkerboard colors
+  // Checkerboard colors for authentic alpha transparency preview
   val checkerLight = if (isDark) Color(0xFF2C2F36) else Color(0xFFE9ECF0)
   val checkerDark = if (isDark) Color(0xFF212328) else Color(0xFFD4D8DF)
 
@@ -107,15 +101,16 @@ fun TxdTextureViewerDialog(
 
       val sourceFileName = if (isInterior) "gta_int" else "gta3"
       loadingMessage = "Buscando $textureName en $sourceFileName..."
-      delay(180) // Smooth visual transition
+      delay(120)
 
-      loadingMessage = "Decodificando bloques de textura RenderWare..."
+      loadingMessage = "Extrayendo bloques de textura RenderWare..."
       val result = TxdTextureDecoder.decodeTexture(
+        context = context,
         textureName = textureName,
         texdbDir = targetDir.parentFile,
         isInterior = isInterior
       )
-      delay(150)
+      delay(120)
 
       decodeResult = result
       isLoading = false
@@ -263,14 +258,43 @@ fun TxdTextureViewerDialog(
                   textAlign = TextAlign.Center
                 )
               }
+            } else if (decodeResult?.bitmap != null) {
+              // Authentic Decoded Texture from game files
+              Image(
+                bitmap = decodeResult!!.bitmap!!.asImageBitmap(),
+                contentDescription = textureName,
+                modifier = Modifier
+                  .fillMaxSize()
+                  .padding(8.dp)
+              )
             } else {
-              decodeResult?.bitmap?.let { bmp ->
-                Image(
-                  bitmap = bmp.asImageBitmap(),
-                  contentDescription = textureName,
-                  modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp)
+              // Texture is indexed in game TOC/manifest but binary bytes not yet present on disk
+              Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(24.dp)
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Info,
+                  contentDescription = null,
+                  tint = Color(0xFF00A2ED),
+                  modifier = Modifier.size(40.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                  text = "Bloques binarios sin extraer",
+                  fontSize = 14.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = if (isDark) Color(0xFFF1F3F5) else Color(0xFF1E2024),
+                  textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                  text = "La textura '$textureName' está indexada en el catálogo de San Andreas, pero sus píxeles comprimidos (.dat / .txd) no se encuentran volcados en el almacenamiento local.",
+                  fontSize = 11.sp,
+                  color = if (isDark) Color(0xFF9EABB8) else Color(0xFF6B7280),
+                  textAlign = TextAlign.Center,
+                  lineHeight = 15.sp
                 )
               }
             }
@@ -279,7 +303,8 @@ fun TxdTextureViewerDialog(
           Spacer(modifier = Modifier.height(16.dp))
 
           // Technical Metadata Specs Pill / Grid
-          decodeResult?.meta?.let { meta ->
+          decodeResult?.let { res ->
+            val meta = res.meta
             Column(
               modifier = Modifier
                 .fillMaxWidth()
@@ -289,25 +314,48 @@ fun TxdTextureViewerDialog(
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-              ) {
-                MetaItem(
-                  label = "Resolución",
-                  value = "${meta.width} × ${meta.height} px",
-                  isDark = isDark
-                )
-                MetaItem(
-                  label = "Formato",
-                  value = meta.format,
-                  isDark = isDark
-                )
-                MetaItem(
-                  label = "Canal Alfa",
-                  value = if (meta.hasAlpha) "Activo (32-bit)" else "Opaco (24-bit)",
-                  isDark = isDark
-                )
+              if (res.isDecoded && res.bitmap != null) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                  MetaItem(
+                    label = "Resolución",
+                    value = "${meta.width} × ${meta.height} px",
+                    isDark = isDark
+                  )
+                  MetaItem(
+                    label = "Formato",
+                    value = meta.format,
+                    isDark = isDark
+                  )
+                  MetaItem(
+                    label = "Canal Alfa",
+                    value = if (meta.hasAlpha) "Activo (32-bit)" else "Opaco (24-bit)",
+                    isDark = isDark
+                  )
+                }
+              } else {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                  MetaItem(
+                    label = "Catálogo",
+                    value = if (isInterior) "gta_int.toc" else "gta3.toc",
+                    isDark = isDark
+                  )
+                  MetaItem(
+                    label = "Estado",
+                    value = "Indexado",
+                    isDark = isDark
+                  )
+                  MetaItem(
+                    label = "Ubicación",
+                    value = if (isInterior) "texdb/gta_int" else "texdb/gta3",
+                    isDark = isDark
+                  )
+                }
               }
             }
           }
