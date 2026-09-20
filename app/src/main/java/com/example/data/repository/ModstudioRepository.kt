@@ -12,8 +12,6 @@ import com.example.data.analyzer.MatchPlan
 import com.example.data.analyzer.ModAnalysisResult
 import com.example.data.analyzer.ModImplementationSummary
 import com.example.data.analyzer.ModStagingManager
-import com.example.data.analyzer.ModTextureAnalyzer
-import com.example.data.analyzer.RawTextureEntry
 import com.example.data.analyzer.ScriptInstallItem
 import com.example.data.analyzer.TargetContainer
 import com.example.data.parser.ContainerRebuildResult
@@ -1043,83 +1041,15 @@ class ModstudioRepository(
           onProgress("Búsqueda finalizada: No se encontraron scripts (.csa, .csi, .fxt)", 0.98f)
         }
 
-        // 4. Raw Textures Analysis & Classification (PNG, With Alpha / Without Alpha)
-        onProgress("Analizando y clasificando texturas crudas (.png)...", 0.98f)
-        val rawTextures: List<RawTextureEntry> = try {
-          if (modUri != null) {
-            ModTextureAnalyzer.analyzeFromUri(
-              context = context,
-              uri = modUri,
-              archiveName = plan.modName,
-              gameWorkingDir = workingDir
-            )
-          } else if (modFile != null) {
-            ModTextureAnalyzer.analyzeFromFile(
-              file = modFile,
-              archiveDisplayName = plan.modName,
-              gameWorkingDir = workingDir
-            )
-          } else {
-            emptyList()
-          }
-        } catch (_: Throwable) {
-          emptyList()
-        }
-
-        val gta3Textures = rawTextures.filter { it.targetContainer == TargetContainer.GTA3 }
-        val gtaIntTextures = rawTextures.filter { it.targetContainer == TargetContainer.GTA_INT }
-        val withAlpha = rawTextures.count { it.hasAlpha }
-        val withoutAlpha = rawTextures.count { !it.hasAlpha }
-
-        if (rawTextures.isNotEmpty()) {
-          onProgress("${rawTextures.size} texturas clasificadas (${gta3Textures.size} gta3, ${gtaIntTextures.size} gta_int). Sincronizando...", 0.99f)
-
-          // Register in Room DB for Explorador TXD
-          try {
-            val textureDbEntries = mutableListOf<ModFileEntry>()
-            for (t in gta3Textures) {
-              textureDbEntries.add(
-                ModFileEntry(
-                  fileName = t.name,
-                  fileType = "GTA3_TXD",
-                  relativePath = "texdb/gta3/${t.alphaFolderName}/${t.name}",
-                  sizeBytes = t.sizeBytes,
-                  isEnabled = true
-                )
-              )
-            }
-            for (t in gtaIntTextures) {
-              textureDbEntries.add(
-                ModFileEntry(
-                  fileName = t.name,
-                  fileType = "GTA_INT_TXD",
-                  relativePath = "texdb/gta_int/${t.alphaFolderName}/${t.name}",
-                  sizeBytes = t.sizeBytes,
-                  isEnabled = true
-                )
-              )
-            }
-            if (textureDbEntries.isNotEmpty()) {
-              modFileDao.insertAll(textureDbEntries)
-            }
-          } catch (_: Throwable) {}
-        }
-
         val scriptSummaryDesc = if (scriptsInstalled.isNotEmpty()) {
           "${scriptsInstalled.size} scripts CLEO instalados en data"
         } else {
           "Sin scripts en mod"
         }
 
-        val textureSummaryDesc = if (rawTextures.isNotEmpty()) {
-          "${rawTextures.size} texturas crudas clasificadas (${gta3Textures.size} exteriores, ${gtaIntTextures.size} interiores)"
-        } else {
-          "Sin texturas crudas"
-        }
-
         addHistoryEntry(
           title = "Mod implementado: ${plan.modName}",
-          description = "Contenedor en files/texdb/ con ${plan.totalDffCount} modelos DFF (${plan.replaceCount} reemplazos, ${plan.injectCount} inyecciones). $scriptSummaryDesc. $textureSummaryDesc.",
+          description = "Contenedor en files/texdb/ con ${plan.totalDffCount} modelos DFF (${plan.replaceCount} reemplazos, ${plan.injectCount} inyecciones). $scriptSummaryDesc.",
           category = "MOD"
         )
         onProgress("¡Mod implementado con éxito!", 1.0f)
@@ -1134,13 +1064,7 @@ class ModstudioRepository(
           affectsGtaInt = plan.affectsGtaInt,
           scriptsFound = scriptsInstalled,
           scriptsSearched = true,
-          scriptsDeployedPath = "Android/data/com.rockstargames.gtasa/",
-          rawTexturesFound = rawTextures,
-          rawTexturesExteriorCount = gta3Textures.size,
-          rawTexturesInteriorCount = gtaIntTextures.size,
-          rawTexturesWithAlphaCount = withAlpha,
-          rawTexturesWithoutAlphaCount = withoutAlpha,
-          texturesDeployedPath = "Android/data/com.rockstargames.gtasa/files/texdb/"
+          scriptsDeployedPath = "Android/data/com.rockstargames.gtasa/"
         )
       } else {
         ModImplementationSummary(

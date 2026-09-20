@@ -63,13 +63,8 @@ data class ModAnalysisResult(
   val totalDffFound: Int,
   val gta3Entries: List<ModDffEntry>,
   val gtaIntEntries: List<ModDffEntry>,
-  val totalTexturesFound: Int = 0,
-  val gta3TextureEntries: List<RawTextureEntry> = emptyList(),
-  val gtaIntTextureEntries: List<RawTextureEntry> = emptyList(),
-  val withAlphaCount: Int = 0,
-  val withoutAlphaCount: Int = 0,
-  val ignoredNonDffCount: Int = 0,
-  val analysisDurationMs: Long = 0L
+  val ignoredNonDffCount: Int,
+  val analysisDurationMs: Long
 )
 
 /**
@@ -157,23 +152,6 @@ object ModDffAnalyzer {
 
     val gta3List = classifiedEntries.filter { it.targetContainer == TargetContainer.GTA3 }
     val gtaIntList = classifiedEntries.filter { it.targetContainer == TargetContainer.GTA_INT }
-
-    // Step 4: Classify raw textures (.png) in the mod
-    val rawTextures = try {
-      ModTextureAnalyzer.analyzeFromUri(
-        context = context,
-        uri = uri,
-        archiveName = displayName,
-        gameWorkingDir = gameWorkingDir
-      )
-    } catch (_: Throwable) {
-      emptyList()
-    }
-    val gta3Tex = rawTextures.filter { it.targetContainer == TargetContainer.GTA3 }
-    val gtaIntTex = rawTextures.filter { it.targetContainer == TargetContainer.GTA_INT }
-    val withAlpha = rawTextures.count { it.hasAlpha }
-    val withoutAlpha = rawTextures.count { !it.hasAlpha }
-
     val durationMs = System.currentTimeMillis() - startTime
 
     ModAnalysisResult(
@@ -181,11 +159,6 @@ object ModDffAnalyzer {
       totalDffFound = classifiedEntries.size,
       gta3Entries = gta3List,
       gtaIntEntries = gtaIntList,
-      totalTexturesFound = rawTextures.size,
-      gta3TextureEntries = gta3Tex,
-      gtaIntTextureEntries = gtaIntTex,
-      withAlphaCount = withAlpha,
-      withoutAlphaCount = withoutAlpha,
       ignoredNonDffCount = ignoredCount,
       analysisDurationMs = durationMs
     )
@@ -232,22 +205,6 @@ object ModDffAnalyzer {
 
     val gta3List = classifiedEntries.filter { it.targetContainer == TargetContainer.GTA3 }
     val gtaIntList = classifiedEntries.filter { it.targetContainer == TargetContainer.GTA_INT }
-
-    // Step 4: Classify raw textures (.png) in the mod
-    val rawTextures = try {
-      ModTextureAnalyzer.analyzeFromFile(
-        file = file,
-        archiveDisplayName = modName,
-        gameWorkingDir = gameWorkingDir
-      )
-    } catch (_: Throwable) {
-      emptyList()
-    }
-    val gta3Tex = rawTextures.filter { it.targetContainer == TargetContainer.GTA3 }
-    val gtaIntTex = rawTextures.filter { it.targetContainer == TargetContainer.GTA_INT }
-    val withAlpha = rawTextures.count { it.hasAlpha }
-    val withoutAlpha = rawTextures.count { !it.hasAlpha }
-
     val durationMs = System.currentTimeMillis() - startTime
 
     ModAnalysisResult(
@@ -255,11 +212,6 @@ object ModDffAnalyzer {
       totalDffFound = classifiedEntries.size,
       gta3Entries = gta3List,
       gtaIntEntries = gtaIntList,
-      totalTexturesFound = rawTextures.size,
-      gta3TextureEntries = gta3Tex,
-      gtaIntTextureEntries = gtaIntTex,
-      withAlphaCount = withAlpha,
-      withoutAlphaCount = withoutAlpha,
       ignoredNonDffCount = ignoredCount,
       analysisDurationMs = durationMs
     )
