@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <!-- Main document body in clean white/light gray like ZArchiver file icon -->
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M7,4 C5.9,4 5,4.9 5,6 L5,30 C5,31.1 5.9,32 7,32 L29,32 C30.1,32 31,31.1 31,30 L31,12 L23,4 L7,4 Z" />
+    <!-- Folded top-right corner in subtle darker shade -->
+    <path
+        android:fillColor="#BDBDBD"
+        android:pathData="M23,4 L31,12 L23,12 Z" />
+</vector>

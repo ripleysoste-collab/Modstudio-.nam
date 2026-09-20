@@ -1,0 +1,6 @@
+{
+  "name": "Modstudio",
+  "description": "Automatizador de mods para GTA San Andreas en Android",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
